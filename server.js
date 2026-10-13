@@ -406,6 +406,31 @@ app.get('/api/radio', (req, res) => {
     .map(p => ({ id: p.id, title: p.title, genre: p.genre, url: '/stream/' + p.id })));
 });
 
+// Radios remember online (verificadas 13/10/2026). Proxy propio: evita bloqueos https/contenido-mixto.
+const RADIOS = [
+  { id: 'remember-radio', name: 'Remember Radio', url: 'https://sm2.streamingmovil.com/proxy/webrr?mp=/WEBRR' },
+  { id: 'java-radio', name: 'Java Radio Remember', url: 'https://stream.zeno.fm/6t6bmeznwtzuv', direct: true },
+  { id: 'makina-fm', name: 'Makina FM', url: 'https://stream.zeno.fm/roqewn7dp4gtv', direct: true },
+  { id: 'remember-vip', name: 'Remember Vip Dance', url: 'https://stream.zeno.fm/471az1pu2nhvv', direct: true },
+  { id: 'mdt', name: 'MDT Radio', url: 'https://streams1.mdtradio.com:8443/mdtnewapp' },
+  { id: 'loca', name: 'Loca FM Remember', url: 'https://s2.we4stream.com/listen/loca_remember/live' },
+  { id: 'efecto', name: 'Efecto FM', url: 'http://directo.efectofm.es:19000/;stream.nsv' },
+  { id: 'bikini', name: 'Bikini FM', url: 'https://stream.emisorasmusicales.net/listen/bikini_fm/bikinifm.mp3' }
+];
+app.get('/api/radios', (req, res) => res.json(RADIOS.map(r => r.direct ? { id: r.id, name: r.name, url: r.url } : { id: r.id, name: r.name })));
+app.get('/api/radio-stream/:id', (req, res) => {
+  const r = RADIOS.find(x => x.id === req.params.id);
+  if (!r) return res.status(404).send('No existe');
+  const lib = r.url.startsWith('https') ? require('https') : require('http');
+  const proxy = lib.get(r.url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36', 'Icy-MetaData': '0' } }, upstream => {
+    if (upstream.statusCode !== 200) { res.status(502).send('Radio no disponible'); upstream.resume(); return; }
+    res.writeHead(200, { 'Content-Type': upstream.headers['content-type'] || 'audio/mpeg', 'Cache-Control': 'no-cache', 'Connection': 'close' });
+    upstream.pipe(res);
+  });
+  proxy.on('error', () => { if (!res.headersSent) res.status(502).send('Radio no disponible'); else res.end(); });
+  req.on('close', () => proxy.destroy());
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ---- Chat en directo (público) ----

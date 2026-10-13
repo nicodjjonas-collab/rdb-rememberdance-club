@@ -80,6 +80,8 @@
       <button id="bNext">Siguiente</button>
       <button id="bShuffle">Aleatorio: ON</button>
     </div>
+    <h2 style="margin-top:18px">📻 RADIOS ONLINE</h2>
+    <div class="rbtns" id="radios"><span class="sub">Cargando…</span></div>
   </div>
 
   <div class="chatbox">
@@ -133,13 +135,26 @@
     if (!list.length) { nowPlay.textContent = 'Aún no hay sesiones: súbelas en Foro → Canciones.'; return; }
     pick(0);
   });
-  audio.onended = () => pick(i + 1);
-  document.getElementById('bPlay').onclick = () => list.length && (audio.paused ? audio.play() : audio.pause());
+  audio.onended = () => pick(i + 1);  document.getElementById('bPlay').onclick = () => list.length && (audio.paused ? audio.play() : audio.pause());
   document.getElementById('bNext').onclick = () => pick(i + 1);
   document.getElementById('bShuffle').onclick = e => {
     shuffle = !shuffle;
     e.target.textContent = 'Aleatorio: ' + (shuffle ? 'ON' : 'OFF');
   };
+  fetch('/api/radios').then(r => r.json()).then(rs => {
+    const box = document.getElementById('radios');
+    box.innerHTML = '';
+    rs.forEach(st => {
+      const b = document.createElement('button');
+      b.textContent = '📻 ' + st.name;
+      b.onclick = () => {
+        audio.src = st.url ? st.url : '/api/radio-stream/' + st.id;
+        nowPlay.textContent = '📻 ' + st.name + ' (en directo)';
+        audio.play().catch(() => {});
+      };
+      box.appendChild(b);
+    });
+  }).catch(() => { document.getElementById('radios').innerHTML = '<span class="sub">No disponible</span>'; });
 
   // Chat WebSocket
   const log = document.getElementById('chatLog');
