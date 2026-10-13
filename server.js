@@ -26,8 +26,8 @@ if (SMTP.host && SMTP.user && SMTP.pass) {
     auth: { user: SMTP.user, pass: SMTP.pass }
   });
 }
-async function sendVerifyEmail(email, token) {
-  const link = `${APP_URL}/verificar.html?t=${token}`;
+async function sendVerifyEmail(email, token, base) {
+  const link = `${(base || APP_URL).replace(/\/$/, '')}/verificar.html?t=${token}`;
   if (!mailer) {
     console.log(`[SIN SMTP] Enlace de verificación para ${email}: ${link}`);
     return false;
@@ -168,6 +168,7 @@ const upload = multer({
 });
 
 const app = express();
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '1mb' }));
 
 // ---- Auth ----
@@ -181,7 +182,8 @@ app.post('/api/register', async (req, res) => {
   const admin = db.users.length === 0 || ADMIN_EMAILS.includes(em);
   db.users.push({ email: em, pass: bcrypt.hashSync(String(pass), 10), admin, verified: false, vtoken: crypto.randomBytes(24).toString('hex'), date: new Date().toISOString() });
   save(db);
-  const sent = await sendVerifyEmail(em, db.users.find(u => u.email === em).vtoken).catch(e => {
+  const base = `${req.protocol}://${req.get('host')}`;
+  const sent = await sendVerifyEmail(em, db.users.find(u => u.email === em).vtoken, base).catch(e => {
     console.log('[SMTP ERROR]', e.message);
     return false;
   });
@@ -206,7 +208,8 @@ app.post('/api/resend', async (req, res) => {
   if (u.verified) return res.json({ ok: true, already: true });
   u.vtoken = crypto.randomBytes(24).toString('hex');
   save(db);
-  await sendVerifyEmail(em, u.vtoken).catch(() => {});
+  const base = `${req.protocol}://${req.get('host')}`;
+  await sendVerifyEmail(em, u.vtoken, base).catch(() => {});
   res.json({ ok: true });
 });
 app.post('/api/login', (req, res) => {
