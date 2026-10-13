@@ -106,7 +106,7 @@
   // Enlaces + estado de directo
   document.getElementById('goTwitch').href = 'https://twitch.tv/' + CONFIG.twitchChannel;
   document.getElementById('goKick').href = 'https://kick.com/' + CONFIG.kickChannel;
-  document.getElementById('goYt').href = 'https://youtube.com/@' + CONFIG.twitchChannel;
+  document.getElementById('goYt').href = 'https://youtube.com/@' + CONFIG.youtubeHandle;
   fetch('https://decapi.me/twitch/uptime/' + CONFIG.twitchChannel).then(r => r.text()).then(t => {
     const dot = document.getElementById('liveDot');
     if (t && !/offline|not found/i.test(t)) {
