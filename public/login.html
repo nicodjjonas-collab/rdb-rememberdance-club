@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>R.D.B. — Entrar</title>
+<link rel="stylesheet" href="css/styles.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  .authbox {
+    max-width: 420px; margin: 8vh auto; background: var(--glass);
+    border: 1px solid var(--stroke); border-radius: 18px; backdrop-filter: blur(14px);
+    padding: 30px; box-shadow: 0 0 40px rgba(192,38,255,.3); text-align: center;
+  }
+  .authbox h1 { font-size: 1.1rem; margin-bottom: 4px; }
+  .authbox p { color: var(--muted); margin-bottom: 18px; }
+  .authbox input {
+    width: 100%; background: rgba(0,0,0,.45); border: 1px solid var(--stroke);
+    border-radius: 10px; color: var(--text); padding: 12px; margin-bottom: 10px;
+    font-size: 1rem; font-family: inherit;
+  }
+  .authbox button {
+    width: 100%; font-family: 'Orbitron', sans-serif; cursor: pointer; font-weight: 700;
+    background: linear-gradient(135deg, rgba(192,38,255,.5), rgba(34,211,238,.35));
+    color: #fff; border: 1px solid var(--stroke); border-radius: 10px; padding: 13px; margin-top: 4px;
+  }
+  .swap { margin-top: 14px; font-size: .9rem; color: var(--muted); }
+  .swap a { color: var(--cyan); cursor: pointer; }
+  #msg { min-height: 1.4em; margin-top: 10px; font-size: .9rem; }
+  #msg.err { color: #ff7d9c; } #msg.ok { color: var(--cyan); }
+</style>
+</head>
+<body>
+<div id="bg3d"></div><div class="vignette"></div>
+<header>
+  <div class="logo">R.D.B. <span>ReMeMBeR DaNCe CLuB</span></div>
+  <nav><a href="index.html">Radio + Chat</a></nav>
+</header>
+<main>
+  <div class="authbox fade-in">
+    <h1 id="title">Entrar al foro</h1>
+    <p id="desc">El foro es solo para socios con cuenta.</p>
+    <input id="email" type="email" placeholder="Email" autocomplete="email">
+    <input id="pass" type="password" placeholder="Contraseña (mínimo 6)" autocomplete="current-password">
+    <button id="go">Entrar</button>
+    <div id="msg"></div>
+    <div class="swap" id="swap">¿Sin cuenta? <a id="swapLink">Regístrate</a></div>
+  </div>
+</main>
+<script src="js/bg3d.js"></script>
+<script>
+(function () {
+  let mode = 'login';
+  const msg = document.getElementById('msg');
+  function setMode(m) {
+    mode = m;
+    document.getElementById('title').textContent = m === 'login' ? 'Entrar al foro' : 'Crear cuenta';
+    document.getElementById('go').textContent = m === 'login' ? 'Entrar' : 'Registrarme';
+    document.getElementById('swap').innerHTML = m === 'login'
+      ? '¿Sin cuenta? <a id="swapLink">Regístrate</a>'
+      : '¿Ya tienes cuenta? <a id="swapLink">Entra</a>';
+    document.getElementById('swapLink').onclick = () => setMode(m === 'login' ? 'register' : 'login');
+  }
+  document.getElementById('swapLink').onclick = () => setMode('register');
+  function go() {
+    msg.className = ''; msg.textContent = '…';
+    fetch('/api/' + mode, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: document.getElementById('email').value, pass: document.getElementById('pass').value })
+    }).then(async r => {
+      const j = await r.json();
+      if (j.ok && mode === 'login') { msg.className = 'ok'; msg.textContent = 'Dentro…'; location.href = '/foro.html'; }
+      else if (j.ok) { msg.className = 'ok'; msg.textContent = 'Cuenta creada. Revisa tu email y pulsa el enlace para validarla.'; }
+      else if (j.needVerify) {
+        msg.className = 'err';
+        msg.innerHTML = 'Valida tu email primero. <a href="#" id="rs" style="color:var(--cyan)">Reenviar correo</a>';
+        document.getElementById('rs').onclick = e => {
+          e.preventDefault();
+          fetch('/api/resend', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: document.getElementById('email').value }) });
+          msg.textContent = 'Correo reenviado si la cuenta existe.';
+        };
+      }
+      else { msg.className = 'err'; msg.textContent = j.error || 'Error'; }
+    }).catch(() => { msg.className = 'err'; msg.textContent = 'Error de red'; });
+  }
+  document.getElementById('go').onclick = go;
+  document.getElementById('pass').onkeydown = e => { if (e.key === 'Enter') go(); };
+})();
+</script>
+</body>
+</html>

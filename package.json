@@ -1,0 +1,19 @@
+{
+  "name": "rdb-club",
+  "version": "1.0.0",
+  "description": "R.D.B. ReMeMBeR DaNCe CLuB - radio, chat y foro",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "express": "^4.19.2",
+    "multer": "^2.4.0",
+    "nodemailer": "^10.1.0",
+    "ws": "^8.18.0"
+  }
+}

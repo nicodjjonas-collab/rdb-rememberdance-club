@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>R.D.B. — Foro del club</title>
+<link rel="stylesheet" href="css/styles.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  .topbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .statsbar {
+    background: var(--glass); border: 1px solid var(--stroke); border-radius: 12px;
+    backdrop-filter: blur(10px); padding: 10px 16px; margin: 12px 0; font-size: .92rem;
+    display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: center;
+  }
+  .statsbar input {
+    background: rgba(0,0,0,.45); border: 1px solid var(--stroke); border-radius: 20px;
+    color: var(--text); padding: 8px 16px; font-family: inherit; width: 220px;
+  }
+  .cat { margin-bottom: 22px; border: 1px solid var(--stroke); border-radius: 14px; overflow: hidden; background: rgba(8,8,20,.55); backdrop-filter: blur(10px); }
+  .cathead {
+    font-family: 'Orbitron', sans-serif; font-size: .85rem; letter-spacing: 2px;
+    padding: 10px 18px; background: linear-gradient(90deg, rgba(192,38,255,.4), rgba(34,211,238,.22));
+    text-shadow: 0 0 12px rgba(192,38,255,.8);
+  }
+  .colhead, .brow {
+    display: grid; grid-template-columns: 52px 1fr 86px 86px 230px; gap: 8px; align-items: center;
+  }
+  .colhead { padding: 8px 14px; font-size: .75rem; color: var(--muted); font-family: 'Orbitron', sans-serif; border-bottom: 1px solid var(--stroke); }
+  .brow { padding: 12px 14px; border-bottom: 1px solid rgba(60,60,90,.5); cursor: pointer; transition: background .15s ease; }
+  .brow:last-child { border-bottom: 0; }
+  .brow:hover { background: rgba(192,38,255,.08); }
+  .bicon {
+    width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+    font-size: 1.3rem; background: rgba(34,211,238,.1); border: 1px solid rgba(34,211,238,.35);
+  }
+  .bname { font-weight: 700; font-size: 1rem; color: var(--cyan); }
+  .bdesc { color: var(--muted); font-size: .86rem; margin-top: 2px; }
+  .bsubs { font-size: .78rem; margin-top: 4px; color: var(--muted); }
+  .bsubs a { color: var(--neon2, #ff2bd6); cursor: pointer; text-decoration: underline; margin-right: 8px; }
+  .num { font-family: 'Orbitron', sans-serif; font-size: .8rem; text-align: center; background: rgba(34,211,238,.08); border-radius: 8px; padding: 6px 4px; }
+  .lastmsg { font-size: .8rem; color: var(--muted); }
+  .lastmsg b { color: var(--text); display: block; font-size: .82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+  .crumbs { display: flex; gap: 6px; flex-wrap: wrap; margin: 14px 0; align-items: center; }
+  .crumbs button { font-family: 'Orbitron', sans-serif; font-size: .72rem; cursor: pointer; background: var(--glass); color: var(--text); border: 1px solid var(--stroke); border-radius: 10px; padding: 8px 14px; }
+  .crumbs button.cur { background: linear-gradient(135deg, rgba(192,38,255,.45), rgba(34,211,238,.3)); }
+  .seccards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .seccard { cursor: pointer; background: var(--glass); border: 1px solid var(--stroke); border-radius: 14px; padding: 16px; backdrop-filter: blur(10px); font-family: 'Orbitron', sans-serif; font-size: .82rem; }
+  .seccard:hover { box-shadow: 0 0 22px rgba(192,38,255,.45); }
+  .seccard small { display: block; font-family: 'Rajdhani', sans-serif; color: var(--muted); margin-top: 6px; font-size: .85rem; }
+  .filters { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .filters select, .upform input, .upform select, .upform textarea, .adminbox input, .adminbox select {
+    background: rgba(0,0,0,.45); border: 1px solid var(--stroke); border-radius: 10px;
+    color: var(--text); padding: 10px 12px; font-size: .95rem; font-family: inherit;
+  }
+  .upform, .adminbox { background: var(--glass); border: 1px solid var(--stroke); border-radius: 16px; backdrop-filter: blur(12px); padding: 18px; margin-bottom: 22px; display: grid; gap: 10px; }
+  .upform h3, .adminbox h3 { font-family: 'Orbitron', sans-serif; font-size: .82rem; letter-spacing: 1px; }
+  .upform button, .adminbox button { font-family: 'Orbitron', sans-serif; cursor: pointer; font-weight: 700; background: linear-gradient(135deg, rgba(192,38,255,.5), rgba(34,211,238,.35)); color: #fff; border: 1px solid var(--stroke); border-radius: 10px; padding: 12px; }
+  .post { background: var(--glass); border: 1px solid var(--stroke); border-radius: 14px; backdrop-filter: blur(10px); padding: 14px 16px; margin-bottom: 12px; }
+  .post h3 { font-size: 1.05rem; }
+  .post .meta { color: var(--muted); font-size: .8rem; margin: 4px 0 8px; }
+  .post .body { white-space: pre-wrap; font-size: .95rem; margin-bottom: 8px; }
+  .post audio { width: 100%; margin: 6px 0; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .btn { font-size: .8rem; font-weight: 700; text-decoration: none; cursor: pointer; color: var(--text); background: rgba(34,211,238,.1); border: 1px solid rgba(34,211,238,.4); border-radius: 8px; padding: 7px 12px; }
+  .btn.danger { background: rgba(255,45,85,.12); border-color: rgba(255,45,85,.5); }
+  .price { color: var(--cyan); font-weight: 700; font-size: 1.05rem; }
+  .comments { margin-top: 10px; border-top: 1px dashed #3a3a55; padding-top: 8px; display: grid; gap: 6px; }
+  .comments .c { font-size: .88rem; background: rgba(0,0,0,.3); border-radius: 8px; padding: 6px 10px; }
+  .comments .c b { color: var(--cyan); }
+  .cform { display: flex; gap: 6px; margin-top: 6px; }
+  .cform input { flex: 1; background: rgba(0,0,0,.45); border: 1px solid var(--stroke); border-radius: 8px; color: var(--text); padding: 8px 10px; font-family: inherit; }
+  .cform button { cursor: pointer; background: rgba(192,38,255,.25); color: #fff; border: 1px solid var(--stroke); border-radius: 8px; padding: 8px 14px; font-weight: 700; }
+  .ttable { border: 1px solid var(--stroke); border-radius: 14px; overflow: hidden; background: rgba(8,8,20,.55); backdrop-filter: blur(10px); }
+  .trow { display: grid; grid-template-columns: 1fr 130px 60px 70px 210px; gap: 8px; align-items: center; padding: 10px 14px; border-bottom: 1px solid rgba(60,60,90,.5); }
+  .trow.head { font-family: 'Orbitron', sans-serif; font-size: .72rem; color: var(--muted); background: rgba(192,38,255,.12); }
+  .trow.topic { cursor: pointer; }
+  .trow.topic:hover { background: rgba(192,38,255,.08); }
+  .trow.topic .subj { font-weight: 700; color: var(--cyan); }
+  .trow.topic .subj small { display: block; color: var(--muted); font-weight: 400; font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 440px; }
+  .trow.topic .c { text-align: center; font-family: 'Orbitron', sans-serif; font-size: .78rem; }
+  .trow.topic .last { font-size: .76rem; color: var(--muted); }
+  .trow.topic .last b { color: var(--text); display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 210px; }
+  .tdetail { padding: 12px 16px 16px 54px; border-bottom: 1px solid rgba(60,60,90,.5); background: rgba(0,0,0,.25); }
+  .tdetail audio { width: 100%; margin: 6px 0; }
+  @media (max-width: 760px) { .trow { grid-template-columns: 1fr 60px; } .trow .hideM { display: none; } }
+  #gate { text-align: center; padding: 60px 20px; }
+  @media (max-width: 760px) { .colhead { display: none; } .brow { grid-template-columns: 52px 1fr; } .num, .lastmsg { display: none; } }
+</style>
+</head>
+<body>
+<div id="bg3d"></div><div class="vignette"></div>
+<header>
+  <div class="logo">R.D.B. <span>ReMeMBeR DaNCe CLuB</span></div>
+  <nav><a href="index.html">Radio + Chat</a><a href="foro.html" class="active">Foro</a><a href="admin.html" id="adminLink" style="display:none">Admin</a><a href="#" id="logout">Salir</a></nav>
+</header>
+<main class="fade-in">
+  <div id="gate" style="display:none"><h1>Solo socios</h1><p class="sub">Entra con tu email para ver el foro.</p><a class="btn" href="login.html">Entrar / Registrarme</a></div>
+  <div id="app" style="display:none">
+    <div class="topbar"><h1>Foro del club</h1><span class="meta" id="who"></span></div>
+    <div class="statsbar"><span id="stats">…</span><input id="gSearch" placeholder="Buscar en todo el foro…"></div>
+    <div id="portada"></div>
+    <div id="board" style="display:none">
+      <div class="crumbs" id="crumbs"></div>
+      <div class="seccards" id="seccards"></div>
+      <div class="adminbox" id="adminbox" style="display:none">
+        <h3>＋ Crear subsección aquí</h3>
+        <div class="row"><input id="nsName" maxlength="80" placeholder="Nombre (ej: Masia 2, Sección 95)">
+        <select id="nsKind"><option value="music">De música (pide audio)</option><option value="board">Tablón (texto)</option></select>
+        <button id="nsGo">Crear</button></div>
+      </div>
+      <div class="upform">
+        <h3 id="upTitle">＋ Publicar</h3>
+        <input id="fTitle" maxlength="120" placeholder="Título">
+        <textarea id="fBody" rows="3" maxlength="2000" placeholder="Descripción / mensaje"></textarea>
+        <div class="row" id="songExtra" style="display:none">
+          <select id="fGenre"></select>
+          <input type="file" id="fAudio" accept=".mp3,.wav,.ogg,.oga,.m4a,.flac,.webm,audio/*">
+        </div>
+        <div class="row" id="saleExtra" style="display:none">
+          <input id="fPrice" maxlength="40" placeholder="Precio (€)">
+          <input id="fContact" maxlength="120" placeholder="Contacto (tel / @)">
+        </div>
+        <button id="bSend">Publicar</button>
+        <div id="upMsg" class="meta"></div>
+      </div>
+      <div class="filters" id="genreBar" style="display:none">
+        <select id="fGenreFilter"><option value="">Todos los estilos</option></select>
+      </div>
+      <div id="posts"></div>
+    </div>
+  </div>
+</main>
+<footer>R.D.B. REMEMBER DANCE CLUB</footer>
+<script src="js/bg3d.js"></script>
+<script src="js/tilt.js"></script>
+<script>
+(function () {
+  let me = null, sections = [], genres = [], allPosts = [], cur = null;
+  let staff = [], myNick = '', iAmMod = false;
+  const badge = nick => {
+    const s = staff.find(x => x.nick === nick);
+    return s ? (s.admin ? ' 👑' : ' 🛡') : '';
+  };
+  const byId = id => sections.find(s => s.id === id);
+  const kids = id => sections.filter(s => s.parent === id);
+  const icon = s => s.kind === 'music' ? '🎵' : '📌';
+
+  fetch('/api/me').then(r => r.json()).then(u => {
+    if (!u.email) { document.getElementById('gate').style.display = ''; return; }
+    me = u;
+    document.getElementById('app').style.display = '';
+    document.getElementById('who').textContent = u.email + (u.admin ? ' (dueño)' : '');
+    document.getElementById('adminbox').style.display = '';
+    if (u.admin) document.getElementById('adminLink').style.display = '';
+    Promise.all([
+      fetch('/api/sections').then(r => r.json()),
+      fetch('/api/meta').then(r => r.json()),
+      fetch('/api/stats').then(r => r.json()),
+      fetch('/api/posts').then(r => r.json()),
+      fetch('/api/staff').then(r => r.json())
+    ]).then(([s, m, st, p, sf]) => {
+      staff = sf;
+      myNick = u.email.split('@')[0];
+      iAmMod = !!(u.admin || sf.find(x => x.nick === myNick && x.mod));
+      sections = s; genres = m.genres; allPosts = p;
+      document.getElementById('stats').textContent =
+        `Usuarios: ${st.users} · Temas: ${st.posts} · Mensajes: ${st.messages} · Bienvenido a ${st.newest}, nuestro último socio.`;
+      const gf = document.getElementById('fGenre'), gff = document.getElementById('fGenreFilter');
+      genres.forEach(g => { gf.add(new Option(g, g)); gff.add(new Option(g, g)); });
+      portada();
+    });
+  });
+  document.getElementById('logout').onclick = e => {
+    e.preventDefault();
+    fetch('/api/logout', { method: 'POST' }).then(() => location.href = '/index.html');
+  };
+  document.getElementById('gSearch').oninput = e => {
+    const q = e.target.value.trim().toLowerCase();
+    if (q.length < 2) { if (!cur) portada(); return; }
+    fetch('/api/posts?q=' + encodeURIComponent(q)).then(r => r.json()).then(list => {
+      document.getElementById('portada').style.display = 'none';
+      document.getElementById('board').style.display = '';
+      document.getElementById('crumbs').innerHTML = '';
+      document.querySelector('.upform').style.display = 'none';
+      document.getElementById('seccards').innerHTML = '';
+      document.getElementById('genreBar').style.display = 'none';
+      document.getElementById('upTitle').textContent = `Resultados para "${q}"`;
+      const box = document.getElementById('posts');
+      box.innerHTML = list.length ? '' : '<p class="sub">Sin resultados.</p>';
+      list.forEach(p => box.appendChild(card(p)));
+    });
+  };
+
+  function subtreePosts(id) {
+    const ids = new Set([id]);
+    let grow = true;
+    while (grow) {
+      grow = false;
+      sections.forEach(s => { if (s.parent && ids.has(s.parent) && !ids.has(s.id)) { ids.add(s.id); grow = true; } });
+    }
+    return allPosts.filter(p => ids.has(p.sectionId));
+  }
+  function lastOf(id) {
+    const l = subtreePosts(id);
+    return l.length ? l[l.length - 1] : null;
+  }
+
+  function portada() {
+    cur = null;
+    document.getElementById('board').style.display = 'none';
+    const P = document.getElementById('portada');
+    P.style.display = '';
+    P.innerHTML = '';
+    const cats = sections.filter(s => s.kind === 'cat');
+    const orphans = sections.filter(s => !s.parent && s.kind !== 'cat');
+    cats.forEach(c => {
+      const boards = kids(c.id);
+      if (!boards.length) return;
+      const div = document.createElement('div');
+      div.className = 'cat';
+      let html = `<div class="cathead">${c.name}</div>
+        <div class="colhead"><span></span><span>Nombre del foro</span><span>Temas</span><span>Mensajes</span><span>Último mensaje</span></div>`;
+      boards.forEach(b => {
+        const temas = subtreePosts(b.id).length;
+        const mens = subtreePosts(b.id).reduce((a, p) => a + 1 + (p.comments || []).length, 0);
+        const last = lastOf(b.id);
+        const subs = kids(b.id).map(k => `<a data-sub="${k.id}">${k.name}</a>`).join('');
+        html += `<div class="brow" data-board="${b.id}">
+          <div class="bicon">${icon(b)}</div>
+          <div><div class="bname"></div><div class="bdesc"></div>${subs ? `<div class="bsubs">Subforos: ${subs}</div>` : ''}</div>
+          <div class="num">${temas}</div><div class="num">${mens}</div>
+          <div class="lastmsg">${last ? `<b></b>${new Date(last.date).toLocaleString('es-ES')}<br>por ${last.nick}` : '—'}</div>
+        </div>`;
+      });
+      div.innerHTML = html;
+      div.querySelectorAll('.bname').forEach((el, i) => el.textContent = boards[i].name);
+      div.querySelectorAll('.bdesc').forEach((el, i) => el.textContent = boards[i].desc || '');
+      div.querySelectorAll('.lastmsg b').forEach((el, i) => {
+        const last = lastOf(boards[i].id);
+        if (last) el.textContent = last.title;
+      });
+      P.appendChild(div);
+    });
+    if (orphans.length) {
+      const div = document.createElement('div');
+      div.className = 'cat';
+      div.innerHTML = `<div class="cathead">OTRAS SECCIONES</div>` + orphans.map(o => {
+        const temas = subtreePosts(o.id).length;
+        return `<div class="brow" data-board="${o.id}"><div class="bicon">${icon(o)}</div>
+          <div><div class="bname">${o.name}</div></div><div class="num">${temas}</div><div class="num">${temas}</div><div class="lastmsg">—</div></div>`;
+      }).join('');
+      P.appendChild(div);
+    }
+    P.querySelectorAll('[data-board]').forEach(r => r.onclick = e => {
+      if (e.target.dataset.sub) return;
+      openBoard(r.dataset.board);
+    });
+    P.querySelectorAll('[data-sub]').forEach(a => a.onclick = e => { e.stopPropagation(); openBoard(a.dataset.sub); });
+  }
+
+  function openBoard(id) {
+    cur = byId(id);
+    if (!cur) return portada();
+    document.getElementById('portada').style.display = 'none';
+    document.getElementById('board').style.display = '';
+    const crumbs = document.getElementById('crumbs');
+    crumbs.innerHTML = '';
+    const path = [];
+    let s = cur;
+    while (s) { path.unshift(s); s = s.parent ? byId(s.parent) : null; }
+    const home = document.createElement('button');
+    home.textContent = '⌂ Foros » Portada';
+    home.onclick = portada;
+    crumbs.appendChild(home);
+    path.forEach(x => {
+      const b = document.createElement('button');
+      b.textContent = x.name;
+      if (x.id === cur.id) b.classList.add('cur');
+      b.onclick = () => openBoard(x.id);
+      crumbs.appendChild(b);
+    });
+    const box = document.getElementById('seccards');
+    box.innerHTML = '';
+    kids(cur.id).forEach(k => {
+      const c = document.createElement('div');
+      c.className = 'seccard';
+      c.innerHTML = `<div></div><small>${subtreePosts(k.id).length} temas · entrar →</small>`;
+      c.querySelector('div').textContent = icon(k) + ' ' + k.name;
+      c.onclick = () => openBoard(k.id);
+      box.appendChild(c);
+    });
+    document.querySelector('.upform').style.display = '';
+    document.getElementById('upTitle').textContent = '＋ Publicar en ' + cur.name;
+    document.getElementById('songExtra').style.display = cur.kind === 'music' ? '' : 'none';
+    document.getElementById('saleExtra').style.display = ['ventas', 'compra'].includes(cur.id) ? '' : 'none';
+    document.getElementById('genreBar').style.display = cur.kind === 'music' ? '' : 'none';
+    loadPosts();
+  }
+
+  function loadPosts() {
+    const g = document.getElementById('fGenreFilter').value;
+    fetch(`/api/posts?sectionId=${cur.id}&genre=${encodeURIComponent(g)}`).then(r => r.json()).then(list => {
+      allPosts = allPosts.filter(p => p.sectionId !== cur.id).concat(list.slice().reverse());
+      const box = document.getElementById('posts');
+      if (!list.length) { box.innerHTML = '<p class="sub">Nada por aquí todavía. ¡Sé el primero!</p>'; return; }
+      const t = document.createElement('div');
+      t.className = 'ttable';
+      t.innerHTML = `<div class="trow head"><span>Asunto</span><span class="hideM">Iniciado por</span><span>Resp.</span><span class="hideM">Vistas</span><span class="hideM">Último mensaje</span></div>`;
+      list.forEach(p => {
+        const r = document.createElement('div');
+        r.className = 'trow topic';
+        const cs = p.comments || [];
+        const lastC = cs[cs.length - 1];
+        const lastTxt = lastC
+          ? `${new Date(lastC.date).toLocaleString('es-ES')} por ${lastC.nick}`
+          : `${new Date(p.date).toLocaleString('es-ES')} por ${p.nick}`;
+        r.innerHTML = `<div class="subj"><span></span><small></small></div>
+          <div class="hideM"></div><div class="c">${cs.length}</div>
+          <div class="c hideM">${p.views || 0}</div>
+          <div class="last hideM"><b></b><span></span></div>`;
+        r.querySelector('.subj span').textContent = '💬 ' + p.title;
+        r.querySelector('.subj small').textContent = (p.body || '').slice(0, 90);
+        r.children[1].textContent = p.nick;
+        r.querySelector('.last b').textContent = lastC ? lastC.text.slice(0, 40) : p.title.slice(0, 40);
+        r.querySelector('.last span').textContent = lastTxt;
+        r.onclick = () => toggleDetail(p.id, r);
+        t.appendChild(r);
+      });
+      box.innerHTML = '';
+      box.appendChild(t);
+    });
+  }
+  function toggleDetail(id, row) {
+    const next = row.nextElementSibling;
+    if (next && next.classList.contains('tdetail')) { next.remove(); return; }
+    document.querySelectorAll('.tdetail').forEach(x => x.remove());
+    const p = allPosts.find(x => x.id === id);
+    if (!p) return;
+    fetch(`/api/posts/${id}/view`, { method: 'POST' }).then(async r => {
+      const j = await r.json().catch(() => ({}));
+      p.views = j.views || (p.views || 0) + 1;
+      const cells = row.querySelectorAll('.c');
+      if (cells[1]) cells[1].textContent = p.views;
+    }).catch(() => {});
+    const d = document.createElement('div');
+    d.className = 'tdetail';
+    d.appendChild(card(p));
+    row.after(d);
+  }
+  document.getElementById('fGenreFilter').onchange = loadPosts;
+
+  document.getElementById('nsGo').onclick = () => {
+    fetch('/api/sections', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: document.getElementById('nsName').value, parent: cur && cur.id, kind: document.getElementById('nsKind').value })
+    }).then(async r => {
+      const j = await r.json();
+      if (j.ok) { document.getElementById('nsName').value = ''; sections.push(j.section); openBoard(cur.id); }
+      else alert(j.error || 'Error');
+    });
+  };
+
+  function card(p) {
+    const d = document.createElement('div');
+    d.className = 'post';
+    const date = new Date(p.date).toLocaleString('es-ES');
+    let extra = '';
+    if (p.stream) {
+      const mb = p.size ? (p.size / 1048576).toFixed(1) + ' MB' : '';
+      extra = `<audio controls preload="none" src="${p.stream}"></audio>
+        <div class="row"><span class="tag">${p.genre || ''}</span><span class="meta">${mb} · ⬇ ${p.downloads}</span>
+        <a class="btn" href="${p.file}">⬇ Descargar</a></div>`;
+    }
+    if (p.price) extra += `<div class="price">${p.price}</div><div class="meta">Contacto: ${p.contact || '—'}</div>`;
+    d.innerHTML = `<h3></h3><div class="meta"></div><div class="body"></div>${extra}
+      <div class="row"><button class="btn danger">Borrar</button></div>
+      <div class="comments"></div>
+      <div class="cform"><input maxlength="500" placeholder="Comentar…"><button>OK</button></div>`;
+    d.querySelector('h3').textContent = p.title;
+    d.querySelector('.meta').textContent = `${p.nick}${badge(p.nick)} · ${date}`;
+    d.querySelector('.body').textContent = p.body || '';
+    const cb = d.querySelector('.comments');
+    (p.comments || []).forEach((c, idx) => {
+      const x = document.createElement('div');
+      x.className = 'c'; x.innerHTML = '<b></b> <span></span>';
+      x.querySelector('b').textContent = c.nick + badge(c.nick);
+      x.querySelector('span').textContent = c.text;
+      if (iAmMod || c.nick === myNick) {
+        const del = document.createElement('button');
+        del.className = 'btn danger'; del.textContent = '✕'; del.style.marginLeft = '8px';
+        del.onclick = () => fetch('/api/comments', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ postId: p.id, idx }) }).then(() => loadPosts());
+        x.appendChild(del);
+      }
+      cb.appendChild(x);
+    });
+    d.querySelector('.cform button').onclick = () => {
+      const text = d.querySelector('.cform input').value;
+      fetch('/api/comments', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postId: p.id, text }) }).then(() => loadPosts());
+    };
+    d.querySelector('.btn.danger').onclick = () => {
+      if (!confirm('¿Borrar?')) return;
+      fetch(`/api/posts/${p.id}`, { method: 'DELETE' }).then(async r => {
+        if (!r.ok) alert((await r.json()).error || 'Error');
+        loadPosts();
+      });
+    };
+    if (iAmMod && p.nick !== myNick) {
+      const bb = document.createElement('button');
+      bb.className = 'btn danger'; bb.textContent = 'Banear autor';
+      bb.onclick = () => {
+        if (!confirm(`¿Banear a ${p.nick}? No podrá entrar.`)) return;
+        fetch('/api/ban', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: p.nick, banned: true }) }).then(async r => {
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) alert(j.error || 'Error'); else loadPosts();
+        });
+      };
+      d.querySelector('.row').appendChild(bb);
+    }
+    return d;
+  }
+
+  document.getElementById('bSend').onclick = () => {
+    const fd = new FormData();
+    fd.append('sectionId', cur.id);
+    fd.append('title', document.getElementById('fTitle').value);
+    fd.append('body', document.getElementById('fBody').value);
+    fd.append('genre', document.getElementById('fGenre').value);
+    fd.append('price', document.getElementById('fPrice').value);
+    fd.append('contact', document.getElementById('fContact').value);
+    const f = document.getElementById('fAudio').files[0];
+    if (f) fd.append('audio', f);
+    const msg = document.getElementById('upMsg');
+    msg.textContent = 'Subiendo…';
+    fetch('/api/posts', { method: 'POST', body: fd }).then(async r => {
+      const j = await r.json();
+      msg.textContent = j.ok ? '¡Publicado!' : ('Error: ' + (j.error || r.status));
+      if (j.ok) { document.getElementById('fTitle').value = ''; document.getElementById('fBody').value = ''; loadPosts(); }
+    }).catch(() => { msg.textContent = 'Error de red'; });
+  };
+})();
+</script>
+</body>
+</html>

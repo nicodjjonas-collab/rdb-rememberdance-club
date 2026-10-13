@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>R.D.B. — Panel del dueño</title>
+<link rel="stylesheet" href="css/styles.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  table { width: 100%; border-collapse: collapse; background: var(--glass); border: 1px solid var(--stroke); border-radius: 14px; overflow: hidden; font-size: .9rem; }
+  th, td { padding: 10px 12px; border-bottom: 1px solid rgba(60,60,90,.5); text-align: left; }
+  th { font-family: 'Orbitron', sans-serif; font-size: .72rem; color: var(--muted); background: rgba(192,38,255,.12); }
+  .pill { font-size: .72rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; }
+  .pill.admin { background: rgba(255,43,85,.2); color: #ff8ba3; }
+  .pill.mod { background: rgba(34,211,238,.15); color: var(--cyan); }
+  .pill.user { background: rgba(150,150,170,.15); color: var(--muted); }
+  .pill.ban { background: rgba(255,0,0,.25); color: #fff; }
+  .mini { font-size: .75rem; font-weight: 700; cursor: pointer; color: var(--text); background: rgba(34,211,238,.1); border: 1px solid rgba(34,211,238,.4); border-radius: 8px; padding: 5px 10px; margin-right: 4px; }
+  .mini.red { background: rgba(255,45,85,.12); border-color: rgba(255,45,85,.5); }
+  h2 { font-family: 'Orbitron', sans-serif; font-size: .95rem; margin: 26px 0 12px; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+<div id="bg3d"></div><div class="vignette"></div>
+<header>
+  <div class="logo">R.D.B. <span>ReMeMBeR DaNCe CLuB</span></div>
+  <nav><a href="index.html">Radio + Chat</a><a href="foro.html">Foro</a><a href="admin.html" class="active">Admin</a></nav>
+</header>
+<main class="fade-in" id="app" style="display:none">
+  <h1>Panel del dueño</h1>
+  <p class="sub">Asigna moderadores, banea y gestiona secciones.</p>
+  <h2>👥 Usuarios</h2>
+  <div style="overflow-x:auto"><table id="users"><tr><th>Email</th><th>Rol</th><th>Estado</th><th>Acciones</th></tr></table></div>
+  <h2>📁 Secciones (borrar solo si están vacías)</h2>
+  <div style="overflow-x:auto"><table id="secs"><tr><th>Sección</th><th>Padre</th><th>Acciones</th></tr></table></div>
+</main>
+<script src="js/bg3d.js"></script>
+<script>
+(function () {
+  fetch('/api/me').then(r => r.json()).then(u => {
+    if (!u.admin) { document.body.innerHTML = '<main><h1>Solo el dueño.</h1><p class="sub"><a href="foro.html" style="color:var(--cyan)">Volver</a></p></main>'; return; }
+    document.getElementById('app').style.display = '';
+    loadUsers(); loadSecs();
+  });
+  function loadUsers() {
+    fetch('/api/users').then(r => r.json()).then(list => {
+      const t = document.getElementById('users');
+      t.querySelectorAll('tr.r').forEach(x => x.remove());
+      list.forEach(u => {
+        const tr = document.createElement('tr');
+        tr.className = 'r';
+        const role = u.admin ? '<span class="pill admin">DUEÑO</span>' : (u.mod ? '<span class="pill mod">MOD</span>' : '<span class="pill user">socio</span>');
+        const st = !u.verified ? '<span class="pill user">sin validar</span>' : (u.banned ? '<span class="pill ban">BANEADO</span>' : '<span class="pill user">ok</span>');
+        tr.innerHTML = `<td></td><td>${role}</td><td>${st}</td><td></td>`;
+        tr.children[0].textContent = u.email;
+        const act = tr.children[3];
+        if (!u.admin) {
+          const b1 = document.createElement('button');
+          b1.className = 'mini'; b1.textContent = u.mod ? 'Quitar mod' : 'Hacer mod';
+          b1.onclick = () => fetch('/api/mods', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: u.email, mod: !u.mod }) }).then(() => loadUsers());
+          const b2 = document.createElement('button');
+          b2.className = 'mini red'; b2.textContent = u.banned ? 'Desbanear' : 'Banear';
+          b2.onclick = () => { if (confirm((u.banned ? 'Desbanear a ' : 'Banear a ') + u.email + '?')) fetch('/api/ban', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: u.email, banned: !u.banned }) }).then(() => loadUsers()); };
+          act.append(b1, b2);
+        }
+        t.appendChild(tr);
+      });
+    });
+  }
+  function loadSecs() {
+    fetch('/api/sections').then(r => r.json()).then(list => {
+      const t = document.getElementById('secs');
+      t.querySelectorAll('tr.r').forEach(x => x.remove());
+      const byId = id => (list.find(s => s.id === id) || {}).name || '—';
+      list.forEach(s => {
+        const tr = document.createElement('tr');
+        tr.className = 'r';
+        tr.innerHTML = `<td></td><td></td><td></td>`;
+        tr.children[0].textContent = (s.kind === 'cat' ? '📁 ' : s.kind === 'music' ? '🎵 ' : '📌 ') + s.name;
+        tr.children[1].textContent = s.parent ? byId(s.parent) : '—';
+        if (s.kind !== 'cat') {
+          const b = document.createElement('button');
+          b.className = 'mini red'; b.textContent = 'Borrar';
+          b.onclick = () => fetch('/api/sections/' + s.id, { method: 'DELETE' }).then(async r => {
+            const j = await r.json().catch(() => ({}));
+            if (!j.ok) alert(j.error || 'Error'); else loadSecs();
+          });
+          tr.children[2].appendChild(b);
+        }
+        t.appendChild(tr);
+      });
+    });
+  }
+})();
+</script>
+</body>
+</html>
