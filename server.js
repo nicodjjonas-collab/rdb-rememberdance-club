@@ -1,4 +1,5 @@
 // R.D.B. Club — servidor: login + secciones anidadas + foro + radio + chat
+require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');

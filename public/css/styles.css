@@ -36,9 +36,10 @@ header {
   display: flex; align-items: center; gap: 12px;
 }
 .logo-vid {
-  height: 46px; border-radius: 10px;
-  box-shadow: 0 0 18px rgba(192,38,255,.7);
-  background: #000;
+  height: 50px; border-radius: 12px;
+  mix-blend-mode: screen; background: transparent;
+  filter: drop-shadow(0 0 10px rgba(192,38,255,.65)) saturate(1.15);
+  border: 1px solid rgba(192,38,255,.35);
 }
 .logo span {
   background: linear-gradient(90deg, var(--neon), var(--cyan));
