@@ -52,6 +52,12 @@
     background: linear-gradient(135deg, rgba(192,38,255,.5), rgba(34,211,238,.35));
     color: #fff; border: 1px solid var(--stroke); border-radius: 10px; padding: 10px 20px;
   }
+  #emobtn { cursor: pointer; font-size: 1.2rem; background: rgba(0,0,0,.45); border: 1px solid var(--stroke); border-radius: 10px; padding: 8px 12px; }
+  #emopanel { padding: 10px 12px; border-top: 1px solid var(--stroke); }
+  #emosearch { width: 100%; background: rgba(0,0,0,.45); border: 1px solid var(--stroke); border-radius: 8px; color: var(--text); padding: 8px 10px; margin-bottom: 8px; font-family: inherit; }
+  #emogrid { display: flex; flex-wrap: wrap; gap: 6px; max-height: 180px; overflow-y: auto; }
+  #emogrid img { height: 32px; cursor: pointer; border-radius: 6px; padding: 2px; }
+  #emogrid img:hover { background: rgba(192,38,255,.3); }
 </style>
 </head>
 <body>
@@ -88,9 +94,14 @@
     <div class="chathead"><span>💬 CHAT EN DIRECTO</span><span id="online">0 online</span></div>
     <div id="chatLog"></div>
     <div class="chatform">
+      <button id="emobtn" type="button" title="Emotes y GIFs">😀</button>
       <input id="nick" maxlength="30" placeholder="Tu nombre">
-      <input id="ctext" maxlength="500" placeholder="Escribe…">
+      <input id="ctext" maxlength="500" placeholder="Escribe… :emote: o pega link .gif">
       <button id="send">Enviar</button>
+    </div>
+    <div id="emopanel" style="display:none">
+      <input id="emosearch" placeholder="Buscar emote…">
+      <div id="emogrid"></div>
     </div>
   </div>
 
@@ -101,6 +112,7 @@
 <footer>R.D.B. REMEMBER DANCE CLUB</footer>
 <script src="js/config.js"></script>
 <script src="js/bg3d.js"></script>
+<script src="js/rich.js"></script>
 <script>
 (function () {
   // Enlaces + estado de directo
@@ -168,7 +180,7 @@
     const h = new Date(m.date).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
     d.innerHTML = '<b></b> <span></span><time>' + h + '</time>';
     d.querySelector('b').textContent = m.nick;
-    d.querySelector('span').textContent = m.text;
+    d.querySelector('span').innerHTML = Rich.render(m.text);
     log.appendChild(d);
     log.scrollTop = log.scrollHeight;
   }
@@ -188,6 +200,28 @@
   }
   document.getElementById('send').onclick = send;
   ctext.onkeydown = e => { if (e.key === 'Enter') send(); };
+  const panel = document.getElementById('emopanel');
+  let emoLoaded = false;
+  document.getElementById('emobtn').onclick = async () => {
+    panel.style.display = panel.style.display === 'none' ? '' : 'none';
+    if (!emoLoaded) {
+      await Rich.loadEmotes();
+      emoLoaded = true;
+      const grid = document.getElementById('emogrid');
+      Rich.list().forEach(e => {
+        const img = document.createElement('img');
+        img.src = e.url; img.title = ':' + e.code + ':'; img.loading = 'lazy';
+        img.onclick = () => { ctext.value += ' :' + e.code + ': '; ctext.focus(); };
+        grid.appendChild(img);
+      });
+    }
+  };
+  document.getElementById('emosearch').oninput = e => {
+    const q = e.target.value.toLowerCase();
+    document.querySelectorAll('#emogrid img').forEach(im => {
+      im.style.display = im.title.toLowerCase().includes(q) ? '' : 'none';
+    });
+  };
 })();
 </script>
 </body>
