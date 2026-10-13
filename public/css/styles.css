@@ -131,3 +131,42 @@ footer {
 .fade-in { animation: fadeUp .7s ease both; }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
 @media (max-width: 900px) { .player-wrap { grid-template-columns: 1fr; } header { flex-direction: column; gap: 12px; } }
+
+/* ===== acabado profesional: color, foco y micro-animaciones ===== */
+::selection { background: rgba(192, 38, 255, .45); }
+body {
+  background:
+    radial-gradient(1000px 500px at 15% -5%, rgba(34, 211, 238, .12), transparent 60%),
+    radial-gradient(1200px 600px at 85% -10%, rgba(255, 43, 214, .14), transparent 60%),
+    radial-gradient(900px 700px at 50% 110%, rgba(192, 38, 255, .10), transparent 60%),
+    var(--bg);
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: rgba(0, 0, 0, .3); }
+::-webkit-scrollbar-thumb { background: linear-gradient(180deg, var(--neon), var(--cyan)); border-radius: 8px; }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--cyan); outline-offset: 2px;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--cyan); box-shadow: 0 0 12px rgba(34, 211, 238, .35); }
+.logo span { animation: hueFlow 9s linear infinite; }
+@keyframes hueFlow {
+  0% { filter: hue-rotate(0deg) drop-shadow(0 0 12px rgba(192, 38, 255, .8)); }
+  50% { filter: hue-rotate(45deg) drop-shadow(0 0 12px rgba(34, 211, 238, .8)); }
+  100% { filter: hue-rotate(0deg) drop-shadow(0 0 12px rgba(192, 38, 255, .8)); }
+}
+.livebar.live-on { animation: livePulse 2s ease-in-out infinite; border-color: rgba(255, 45, 85, .6); }
+@keyframes livePulse {
+  0%, 100% { box-shadow: 0 0 12px rgba(255, 45, 85, .25); }
+  50% { box-shadow: 0 0 30px rgba(255, 45, 85, .6); }
+}
+#chatLog .m { animation: slideMsg .25s ease both; }
+@keyframes slideMsg { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.player { transition: box-shadow .3s ease; }
+.player:hover { box-shadow: 0 0 55px rgba(34, 211, 238, .35), inset 0 0 60px rgba(0, 0, 0, .6); }
+#muteBtn {
+  position: fixed; right: 16px; bottom: 16px; z-index: 50;
+  width: 46px; height: 46px; border-radius: 50%; cursor: pointer; font-size: 1.2rem;
+  background: var(--glass); border: 1px solid var(--stroke); color: var(--text);
+  backdrop-filter: blur(10px); box-shadow: 0 0 16px rgba(192, 38, 255, .4);
+}
+#muteBtn:hover { transform: scale(1.08); }

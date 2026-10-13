@@ -135,6 +135,7 @@
 <script src="js/bg3d.js"></script>
 <script src="js/tilt.js"></script>
 <script src="js/rich.js"></script>
+<script src="js/sounds.js"></script>
 <script>
 (function () {
   let me = null, sections = [], genres = [], allPosts = [], cur = null;
@@ -397,7 +398,7 @@
     d.querySelector('.cform button').onclick = () => {
       const text = d.querySelector('.cform input').value;
       fetch('/api/comments', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ postId: p.id, text }) }).then(() => loadPosts());
+        body: JSON.stringify({ postId: p.id, text }) }).then(() => { if (window.RDBSound) RDBSound.send(); loadPosts(); });
     };
     d.querySelector('.btn.danger').onclick = () => {
       if (!confirm('¿Borrar?')) return;
@@ -437,6 +438,7 @@
     fetch('/api/posts', { method: 'POST', body: fd }).then(async r => {
       const j = await r.json();
       msg.textContent = j.ok ? '¡Publicado!' : ('Error: ' + (j.error || r.status));
+      if (window.RDBSound) { j.ok ? RDBSound.send() : RDBSound.error(); }
       if (j.ok) { document.getElementById('fTitle').value = ''; document.getElementById('fBody').value = ''; loadPosts(); }
     }).catch(() => { msg.textContent = 'Error de red'; });
   };

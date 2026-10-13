@@ -122,6 +122,7 @@
 <script src="js/config.js"></script>
 <script src="js/bg3d.js"></script>
 <script src="js/rich.js"></script>
+<script src="js/sounds.js"></script>
 <script>
 (function () {
   // Enlaces + estado de directo
@@ -134,6 +135,7 @@
       dot.classList.add('on');
       document.getElementById('liveText').textContent = 'EN DIRECTO — ' + t;
       document.getElementById('liveState').textContent = '🔴 Estamos en directo, entra:';
+      document.getElementById('livebar').classList.add('live-on');
       const bL = document.getElementById('bLive');
       bL.style.display = '';
       bL.onclick = () => {
