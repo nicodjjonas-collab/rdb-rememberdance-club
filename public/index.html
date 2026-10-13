@@ -85,6 +85,11 @@
       <button id="bPlay">Play</button>
       <button id="bNext">Siguiente</button>
       <button id="bShuffle">Aleatorio: ON</button>
+      <button id="bLive" style="display:none">🔴 Mi directo en vivo</button>
+    </div>
+    <div id="liveAudio" style="display:none;margin-top:12px">
+      <div class="sub" style="margin-bottom:6px">🔴 Sonando tu directo de Twitch</div>
+      <iframe id="twAudio" width="100%" height="120" frameborder="0" allowfullscreen></iframe>
     </div>
     <h2 style="margin-top:18px">📻 RADIOS ONLINE</h2>
     <div class="rbtns" id="radios"><span class="sub">Cargando…</span></div>
@@ -93,11 +98,15 @@
   <div class="chatbox">
     <div class="chathead"><span>💬 CHAT EN DIRECTO</span><span id="online">0 online</span></div>
     <div id="chatLog"></div>
-    <div class="chatform">
+    <div class="chatform" id="chatform" style="display:none">
       <button id="emobtn" type="button" title="Emotes y GIFs">😀</button>
-      <input id="nick" maxlength="30" placeholder="Tu nombre">
+      <span id="chnick" class="sub" style="align-self:center"></span>
       <input id="ctext" maxlength="500" placeholder="Escribe… :emote: o pega link .gif">
       <button id="send">Enviar</button>
+    </div>
+    <div id="chatgate" style="display:none;padding:18px;text-align:center">
+      <div class="sub">🔒 El chat es solo para socios. Entra para verlo y escribir.</div>
+      <a href="login.html" style="display:inline-block;margin-top:8px;font-family:'Orbitron',sans-serif;font-size:.8rem;color:#fff;text-decoration:none;background:linear-gradient(135deg,rgba(192,38,255,.5),rgba(34,211,238,.35));border:1px solid var(--stroke);border-radius:10px;padding:10px 22px;">Entrar / Registrarme</a>
     </div>
     <div id="emopanel" style="display:none">
       <input id="emosearch" placeholder="Buscar emote…">
@@ -125,6 +134,15 @@
       dot.classList.add('on');
       document.getElementById('liveText').textContent = 'EN DIRECTO — ' + t;
       document.getElementById('liveState').textContent = '🔴 Estamos en directo, entra:';
+      const bL = document.getElementById('bLive');
+      bL.style.display = '';
+      bL.onclick = () => {
+        audio.pause();
+        document.getElementById('liveAudio').style.display = '';
+        document.getElementById('twAudio').src =
+          `https://player.twitch.tv/?channel=${CONFIG.twitchChannel}&parent=${location.hostname}&autoplay=true&muted=false`;
+        nowPlay.textContent = '🔴 Tu directo en vivo';
+      };
     } else {
       document.getElementById('liveState').textContent = '⚫ Offline ahora — suena la radio.';
       document.getElementById('liveText').textContent = 'Radio del club';
@@ -134,9 +152,14 @@
   // Radio: playlist de /api/radio
   const audio = document.getElementById('audio');
   const nowPlay = document.getElementById('nowPlay');
+  function stopLive() {
+    document.getElementById('twAudio').src = '';
+    document.getElementById('liveAudio').style.display = 'none';
+  }
   let list = [], i = 0, shuffle = true;
   function pick(n) {
     if (!list.length) return;
+    stopLive();
     i = shuffle ? Math.floor(Math.random() * list.length) : (n % list.length);
     audio.src = list[i].url;
     nowPlay.textContent = '🎵 ' + list[i].title + '  [' + list[i].genre + ']';
@@ -147,7 +170,7 @@
     if (!list.length) { nowPlay.textContent = 'Aún no hay sesiones: súbelas en Foro → Canciones.'; return; }
     pick(0);
   });
-  audio.onended = () => pick(i + 1);  document.getElementById('bPlay').onclick = () => list.length && (audio.paused ? audio.play() : audio.pause());
+  audio.onended = () => pick(i + 1);  document.getElementById('bPlay').onclick = () => { if (!list.length) return; stopLive(); audio.paused ? audio.play() : audio.pause(); };
   document.getElementById('bNext').onclick = () => pick(i + 1);
   document.getElementById('bShuffle').onclick = e => {
     shuffle = !shuffle;
@@ -160,6 +183,7 @@
       const b = document.createElement('button');
       b.textContent = '📻 ' + st.name;
       b.onclick = () => {
+        stopLive();
         audio.src = st.url ? st.url : '/api/radio-stream/' + st.id;
         nowPlay.textContent = '📻 ' + st.name + ' (en directo)';
         audio.play().catch(() => {});
@@ -168,12 +192,10 @@
     });
   }).catch(() => { document.getElementById('radios').innerHTML = '<span class="sub">No disponible</span>'; });
 
-  // Chat WebSocket
+  // Chat WebSocket (solo socios: sin login ni se ve ni se escribe)
   const log = document.getElementById('chatLog');
-  const nick = document.getElementById('nick');
   const ctext = document.getElementById('ctext');
-  nick.value = localStorage.getItem('rdb_nick') || '';
-  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/chat');
+  let ws = null;
   function add(m) {
     const d = document.createElement('div');
     d.className = 'm';
@@ -184,17 +206,39 @@
     log.appendChild(d);
     log.scrollTop = log.scrollHeight;
   }
-  ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', nick: nick.value }));
-  ws.onmessage = ev => {
-    const m = JSON.parse(ev.data);
-    if (m.type === 'history') m.items.forEach(add);
-    if (m.type === 'msg') add(m);
-    if (m.type === 'online') document.getElementById('online').textContent = m.n + ' online';
-  };
+  fetch('/api/me').then(r => r.json()).then(u => {
+    if (!u.email) {
+      document.getElementById('chatform').style.display = 'none';
+      document.getElementById('emopanel').style.display = 'none';
+      document.getElementById('chatgate').style.display = '';
+      log.innerHTML = '<div class="m">🔒 <span>El chat es solo para socios. Entra para verlo y escribir.</span></div>';
+      return;
+    }
+    document.getElementById('chnick').textContent = u.email.split('@')[0];
+    document.getElementById('chatform').style.display = '';
+    connect();
+  });
+  function connect() {
+    fetch('/api/chat-token').then(r => r.json()).then(j => {
+      if (!j.token) { setTimeout(connect, 5000); return; }
+      ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/chat?t=' + j.token);
+      ws.onmessage = ev => {
+        const m = JSON.parse(ev.data);
+        if (m.type === 'history') m.items.forEach(add);
+        if (m.type === 'msg') add(m);
+        if (m.type === 'denied') {
+          log.innerHTML = '<div class="m">🔒 <span>Sin acceso. Entra de nuevo.</span></div>';
+          try { ws.close(); } catch {}
+        }
+        if (m.type === 'online') document.getElementById('online').textContent = m.n + ' online';
+      };
+      ws.onclose = () => setTimeout(() => {
+        if (document.getElementById('chatform').style.display !== 'none') connect();
+      }, 4000);
+    }).catch(() => setTimeout(connect, 5000));
+  }
   function send() {
-    if (!ctext.value.trim()) return;
-    localStorage.setItem('rdb_nick', nick.value);
-    if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'hello', nick: nick.value }));
+    if (!ctext.value.trim() || !ws || ws.readyState !== 1) return;
     ws.send(JSON.stringify({ type: 'msg', text: ctext.value }));
     ctext.value = '';
   }

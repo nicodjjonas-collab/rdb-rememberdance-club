@@ -434,22 +434,35 @@ app.get('/api/radio-stream/:id', (req, res) => {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ---- Chat en directo (público) ----
+// ---- Chat en directo (solo socios: token de un uso) ----
 const server = http.createServer(app);
+const chatTokens = new Map();
+app.get('/api/chat-token', needAuth, (req, res) => {
+  const token = crypto.randomBytes(16).toString('hex');
+  chatTokens.set(token, { email: req.user.email, date: Date.now() });
+  res.json({ ok: true, token });
+});
 const wss = new WebSocket.Server({ server, path: '/chat' });
 const history = load().chat.slice(-50);
 function broadcast(obj) {
   const msg = JSON.stringify(obj);
   wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(msg); });
 }
-wss.on('connection', ws => {
-  ws.nick = 'Anónimo';
+wss.on('connection', (ws, req) => {
+  let t = null;
+  try { t = new URL(req.url, 'http://x').searchParams.get('t'); } catch {}
+  const rec = t && chatTokens.get(t);
+  if (!rec) { try { ws.send(JSON.stringify({ type: 'denied' })); } catch {} ws.close(); return; }
+  chatTokens.delete(t);
+  const db0 = load();
+  const u = db0.users.find(x => x.email === rec.email);
+  if (!u || u.banned || !u.verified) { try { ws.send(JSON.stringify({ type: 'denied' })); } catch {} ws.close(); return; }
+  ws.nick = rec.email.split('@')[0];
   ws.send(JSON.stringify({ type: 'history', items: history }));
   broadcast({ type: 'online', n: wss.clients.size });
   ws.on('message', raw => {
     let m;
     try { m = JSON.parse(raw); } catch { return; }
-    if (m.type === 'hello') { ws.nick = esc(m.nick).slice(0, 30) || 'Anónimo'; return; }
     if (m.type === 'msg' && m.text && String(m.text).trim()) {
       const item = { nick: ws.nick, text: esc(m.text).slice(0, 500), date: new Date().toISOString() };
       history.push(item);
