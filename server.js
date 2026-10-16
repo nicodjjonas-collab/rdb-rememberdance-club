@@ -200,8 +200,7 @@ app.post('/api/verify', (req, res) => {
   setSession(res, u.email);
   res.json({ ok: true, email: u.email });
 });
-app.post('/api/resend', async (req, res) => {
-  const em = String((req.body || {}).email || '').trim().toLowerCase();
+app.post('/api/resend', async (req, res) => {  const em = String((req.body || {}).email || '').trim().toLowerCase();
   const db = load();
   const u = db.users.find(x => x.email === em);
   if (!u) return res.json({ ok: true });
@@ -210,6 +209,16 @@ app.post('/api/resend', async (req, res) => {
   save(db);
   const base = `${req.protocol}://${req.get('host')}`;
   await sendVerifyEmail(em, u.vtoken, base).catch(() => {});
+  res.json({ ok: true });
+});
+app.post('/api/validate', needAdmin, (req, res) => {
+  const em = String((req.body || {}).email || '').trim().toLowerCase();
+  const db = load();
+  const u = db.users.find(x => x.email === em);
+  if (!u) return res.status(404).json({ error: 'No existe' });
+  u.verified = true;
+  delete u.vtoken;
+  save(db);
   res.json({ ok: true });
 });
 app.post('/api/login', (req, res) => {

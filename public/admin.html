@@ -65,6 +65,13 @@
           b2.onclick = () => { if (confirm((u.banned ? 'Desbanear a ' : 'Banear a ') + u.email + '?')) fetch('/api/ban', { method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: u.email, banned: !u.banned }) }).then(() => loadUsers()); };
           act.append(b1, b2);
+          if (!u.verified) {
+            const b3 = document.createElement('button');
+            b3.className = 'mini'; b3.textContent = 'Validar email';
+            b3.onclick = () => fetch('/api/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email: u.email }) }).then(() => loadUsers());
+            act.appendChild(b3);
+          }
         }
         t.appendChild(tr);
       });
