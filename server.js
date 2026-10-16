@@ -10,6 +10,7 @@ const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
 const nodemailer = require('nodemailer');
+const terabox = require('./terabox');
 
 const PORT = process.env.PORT || process.env.SERVER_PORT || 3000;
 const APP_URL = (process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || ('http://localhost:' + PORT)).replace(/\/$/, '');
@@ -289,6 +290,7 @@ async function storeFile(reqFile) {
 }
 async function deleteFile(post) {
   try {
+    if (post.public_id === 'terabox') { await terabox.remove(post.file); return; }
     if (post.public_id && useCloud) await cloud.uploader.destroy(post.public_id, { resource_type: 'video' }).catch(() => cloud.uploader.destroy(post.public_id));
     else if (post.file && !/^https?:\/\//.test(post.file)) fs.rm(path.join(UP, post.file), { force: true }, () => {});
   } catch {}
@@ -524,6 +526,23 @@ app.get('/api/stats', needAuth, async (req, res) => {
   });
 });
 
+// ---- TeraBox (admin) ----
+app.get('/api/terabox/status', needAdmin, async (req, res) => {
+  try {
+    const a = await terabox.authorized();
+    let quota = null;
+    if (a.authorized) quota = await terabox.quota().catch(() => null);
+    res.json({ ...a, quota });
+  } catch (e) { res.json({ configured: terabox.configured(), authorized: false, error: e.message }); }
+});
+app.post('/api/terabox/device', needAdmin, async (req, res) => {
+  try { res.json({ ok: true, ...(await terabox.deviceStart()) }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/terabox/poll', needAdmin, async (req, res) => {
+  try { res.json(await terabox.devicePoll((req.body || {}).device_code)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
 // ---- Secciones ----
 app.get('/api/sections', needAuth, async (req, res) => {
   res.json(await store.sections());
@@ -563,7 +582,7 @@ app.get('/api/posts', needAuth, async (req, res) => {
     stream: p.file ? (useCloud ? p.file : '/stream/' + p.id) : undefined
   })));
 });
-const up = () => (useCloud ? memUpload : diskUpload);
+const up = () => memUpload;
 app.post('/api/posts', needAuth, (req, res, next) => {
   up().single('audio')(req, res, err => {
     if (err) return res.status(400).json({ error: err.message || 'Fallo la subida' });
@@ -578,11 +597,21 @@ app.post('/api/posts', needAuth, (req, res, next) => {
   if (sec.kind === 'music' && !req.file) return res.status(400).json({ error: 'Sube el audio (mp3/wav/ogg/m4a)' });  let stored = {};
   try {
     if (req.file) {
-      if (useCloud) {
+      const buf = req.file.buffer;
+      let tbOn = false;
+      try { tbOn = (await terabox.authorized()).authorized; } catch {}
+      if (tbOn) {
+        const safe = req.file.originalname.replace(/[^\w.\-() ]+/g, '_').slice(0, 80);
+        const rp = '/RDB Club/' + Date.now() + '-' + safe;
+        await terabox.uploadBuffer(buf, rp);
+        stored = { file: rp, public_id: 'terabox', size: req.file.size };
+      } else if (useCloud) {
         const r = await storeFile(req.file);
         stored = { file: r.file, public_id: r.public_id, size: r.size };
       } else {
-        stored = { file: req.file.filename, public_id: null, size: req.file.size };
+        const name = uid() + path.extname(req.file.originalname);
+        fs.writeFileSync(path.join(UP, name), buf);
+        stored = { file: name, public_id: null, size: req.file.size };
       }
     }
   } catch (e) { return res.status(500).json({ error: 'No se pudo guardar el audio' }); }
@@ -641,12 +670,20 @@ app.get('/dl/:id', needAuth, async (req, res) => {
   const p = await store.findPost(req.params.id);
   if (!p || !p.file) return res.status(404).send('No existe');
   await store.incPost(req.params.id, 'downloads');
+  if (p.public_id === 'terabox') {
+    try { return res.redirect(await terabox.downloadLink(p.file)); }
+    catch { return res.status(502).send('TeraBox no disponible'); }
+  }
   if (useCloud) return res.redirect(p.file);
   res.download(path.join(UP, p.file), p.original || p.file);
 });
 app.get('/stream/:id', async (req, res) => {
   const p = await store.findPost(req.params.id);
   if (!p || !p.file) return res.status(404).send('No existe');
+  if (p.public_id === 'terabox') {
+    try { return res.redirect(await terabox.downloadLink(p.file)); }
+    catch { return res.status(502).send('TeraBox no disponible'); }
+  }
   if (useCloud) return res.redirect(p.file);
   res.sendFile(path.join(UP, p.file));
 });
@@ -726,6 +763,7 @@ function broadcast(obj) {
 
 (async () => {
   await storeInit();
+  terabox.attachPool(usePg ? pg : null);
   filesInit();
   chatHistory = await store.chat();
   server.listen(PORT, () => console.log('RDB Club en puerto ' + PORT + (usePg ? ' [PG]' : ' [local]') + (useCloud ? ' [cloud]' : '')));

@@ -17,6 +17,10 @@
   .pill.ban { background: rgba(255,0,0,.25); color: #fff; }
   .mini { font-size: .75rem; font-weight: 700; cursor: pointer; color: var(--text); background: rgba(34,211,238,.1); border: 1px solid rgba(34,211,238,.4); border-radius: 8px; padding: 5px 10px; margin-right: 4px; }
   .mini.red { background: rgba(255,45,85,.12); border-color: rgba(255,45,85,.5); }
+  .adminbox { background: var(--glass); border: 1px solid var(--stroke); border-radius: 16px; backdrop-filter: blur(12px); padding: 18px; margin-bottom: 22px; display: grid; gap: 10px; }
+  .adminbox button { font-family: 'Orbitron', sans-serif; cursor: pointer; font-weight: 700; background: linear-gradient(135deg, rgba(192,38,255,.5), rgba(34,211,238,.35)); color: #fff; border: 1px solid var(--stroke); border-radius: 10px; padding: 12px 20px; }
+  .meta { color: var(--muted); font-size: .85rem; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   h2 { font-family: 'Orbitron', sans-serif; font-size: .95rem; margin: 26px 0 12px; letter-spacing: 1px; }
 </style>
 </head>
@@ -31,6 +35,19 @@
   <p class="sub">Asigna moderadores, banea y gestiona secciones.</p>
   <h2>👥 Usuarios</h2>
   <div style="overflow-x:auto"><table id="users"><tr><th>Email</th><th>Rol</th><th>Estado</th><th>Acciones</th></tr></table></div>
+  <h2>☁️ TeraBox 1 TB (subidas automáticas)</h2>
+  <div class="adminbox" id="tbbox">
+    <div id="tbStatus" class="meta">Comprobando…</div>
+    <div class="row">
+      <button id="tbGo">Conectar con QR</button>
+      <span class="meta">Necesitas client_id/secret vendor en el servidor. Escanea el QR con la app TeraBox.</span>
+    </div>
+    <div id="tbQr" style="display:none;text-align:center">
+      <img id="tbQrImg" style="max-width:240px;border-radius:12px;background:#fff;padding:8px">
+      <div class="meta">Escanea con la app TeraBox…</div>
+    </div>
+    <div id="tbQuota" class="meta"></div>
+  </div>
   <h2>📁 Secciones (borrar solo si están vacías)</h2>
   <div style="overflow-x:auto"><table id="secs"><tr><th>Sección</th><th>Padre</th><th>Acciones</th></tr></table></div>
 </main>
@@ -41,7 +58,7 @@
   fetch('/api/me').then(r => r.json()).then(u => {
     if (!u.admin) { document.body.innerHTML = '<main><h1>Solo el dueño.</h1><p class="sub"><a href="foro.html" style="color:var(--cyan)">Volver</a></p></main>'; return; }
     document.getElementById('app').style.display = '';
-    loadUsers(); loadSecs();
+    loadUsers(); loadSecs(); loadTb();
   });
   function loadUsers() {
     fetch('/api/users').then(r => r.json()).then(list => {
@@ -77,6 +94,31 @@
       });
     });
   }
+  function loadTb() {
+    fetch('/api/terabox/status').then(r => r.json()).then(s => {
+      const el = document.getElementById('tbStatus');
+      if (!s.configured) { el.textContent = 'Sin configurar: faltan TERABOX_CLIENT_ID/SECRET/PRIVATE_SECRET en el servidor.'; return; }
+      el.textContent = s.authorized ? 'Conectado ✓' : 'Configurado, falta autorizar con QR.';
+      if (s.quota) {
+        const gb = n => (n / 1073741824).toFixed(1) + ' GB';
+        document.getElementById('tbQuota').textContent = `Uso: ${gb(s.quota.used)} de ${gb(s.quota.total)}`;
+      }
+    }).catch(() => { document.getElementById('tbStatus').textContent = 'Error de estado.'; });
+  }
+  document.getElementById('tbGo').onclick = () => {
+    fetch('/api/terabox/device', { method: 'POST' }).then(async r => {
+      const j = await r.json();
+      if (!j.qrcode) { alert(j.error || 'Error'); return; }
+      document.getElementById('tbQr').style.display = '';
+      document.getElementById('tbQrImg').src = j.qrcode;
+      const end = Date.now() + (j.expires_in || 300) * 1000;
+      const iv = setInterval(async () => {
+        if (Date.now() > end) { clearInterval(iv); return; }
+        const p = await fetch('/api/terabox/poll', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device_code: j.device_code }) }).then(x => x.json()).catch(() => ({}));
+        if (p.ok) { clearInterval(iv); document.getElementById('tbQr').style.display = 'none'; loadTb(); }
+      }, (j.interval || 3) * 1000);
+    });
+  };
   function loadSecs() {
     fetch('/api/sections').then(r => r.json()).then(list => {
       const t = document.getElementById('secs');
