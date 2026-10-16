@@ -64,7 +64,7 @@
 <div id="bg3d"></div><div class="vignette"></div>
 <header>
   <div class="logo"><video class="logo-vid" src="videos/logo-small.mp4" autoplay muted loop playsinline></video><div>R.D.B. <span>ReMeMBeR DaNCe CLuB</span></div></div>
-  <nav><a href="index.html" class="active">Radio + Chat</a><a href="foro.html">Foro</a></nav>
+  <nav><a href="index.html" class="active">Radio + Chat</a><a href="foro.html">Foro</a><a href="perfil.html">Mi perfil</a></nav>
 </header>
 <main class="fade-in">
   <h1><span class="live-dot" id="liveDot"></span><span id="liveText">Radio del club</span></h1>
@@ -198,11 +198,18 @@
   const log = document.getElementById('chatLog');
   const ctext = document.getElementById('ctext');
   let ws = null;
+  const avatars = {};
   function add(m) {
     const d = document.createElement('div');
     d.className = 'm';
     const h = new Date(m.date).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
     d.innerHTML = '<b></b> <span></span><time>' + h + '</time>';
+    if (avatars[m.nick]) {
+      const im = document.createElement('img');
+      im.src = avatars[m.nick]; im.loading = 'lazy';
+      im.style.cssText = 'width:22px;height:22px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:5px';
+      d.prepend(im);
+    }
     d.querySelector('b').textContent = m.nick;
     d.querySelector('span').innerHTML = Rich.render(m.text);
     log.appendChild(d);
@@ -216,8 +223,11 @@
       log.innerHTML = '<div class="m">🔒 <span>El chat es solo para socios. Entra para verlo y escribir.</span></div>';
       return;
     }
-    document.getElementById('chnick').textContent = u.email.split('@')[0];
+    document.getElementById('chnick').textContent = u.name || u.email.split('@')[0];
     document.getElementById('chatform').style.display = '';
+    fetch('/api/nicks').then(r => r.json()).then(nk => {
+      nk.forEach(n => { if (n.avatar) { avatars[n.nick] = n.avatar; avatars[n.email] = n.avatar; } });
+    }).catch(() => {});
     connect();
   });
   function connect() {

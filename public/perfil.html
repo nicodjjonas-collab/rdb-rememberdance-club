@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>R.D.B. — Mi perfil</title>
+<link rel="stylesheet" href="css/styles.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  .pcard {
+    max-width: 560px; margin: 0 auto; background: var(--glass);
+    border: 1px solid var(--stroke); border-radius: 18px; backdrop-filter: blur(14px);
+    padding: 26px; text-align: center; box-shadow: 0 0 40px rgba(192,38,255,.25);
+  }
+  #avatarImg {
+    width: 130px; height: 130px; border-radius: 50%; object-fit: cover;
+    border: 3px solid var(--neon); box-shadow: 0 0 24px rgba(192,38,255,.6);
+    background: #000;
+  }
+  .rank { display: inline-block; font-family: 'Orbitron', sans-serif; font-size: .75rem;
+    background: rgba(34,211,238,.12); color: var(--cyan); border: 1px solid rgba(34,211,238,.4);
+    padding: 4px 14px; border-radius: 20px; margin: 10px 0; }
+  .pcard input[type=text] {
+    width: 100%; background: rgba(0,0,0,.45); border: 1px solid var(--stroke);
+    border-radius: 10px; color: var(--text); padding: 12px; margin: 8px 0;
+    font-size: 1rem; font-family: inherit; text-align: center;
+  }
+  .pcard input[type=file] { margin: 10px 0; color: var(--muted); }
+  .pcard button {
+    font-family: 'Orbitron', sans-serif; cursor: pointer; font-weight: 700;
+    background: linear-gradient(135deg, rgba(192,38,255,.5), rgba(34,211,238,.35));
+    color: #fff; border: 1px solid var(--stroke); border-radius: 10px; padding: 12px 26px; margin: 6px 4px;
+  }
+  #pmsg { min-height: 1.4em; margin-top: 10px; font-size: .9rem; }
+  #pmsg.err { color: #ff7d9c; } #pmsg.ok { color: var(--cyan); }
+  .pstats { display: flex; gap: 12px; justify-content: center; margin: 14px 0; }
+  .pstats div { background: rgba(0,0,0,.35); border-radius: 12px; padding: 10px 20px; }
+  .pstats b { display: block; font-size: 1.3rem; color: var(--cyan); }
+  .pstats span { font-size: .75rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="bg3d"></div><div class="vignette"></div>
+<header>
+  <div class="logo"><video class="logo-vid" src="videos/logo-small.mp4" autoplay muted loop playsinline></video><div>R.D.B. <span>ReMeMBeR DaNCe CLuB</span></div></div>
+  <nav><a href="index.html">Radio + Chat</a><a href="foro.html">Foro</a><a href="perfil.html" class="active">Mi perfil</a><a href="#" id="logout">Salir</a></nav>
+</header>
+<main>
+  <div class="pcard fade-in" id="pcard" style="display:none">
+    <img id="avatarImg" alt="avatar">
+    <h1 id="pname" style="font-size:1.2rem;margin-top:10px"></h1>
+    <div class="rank" id="prank"></div>
+    <div class="pstats">
+      <div><b id="pmsgs">0</b><span>mensajes</span></div>
+      <div><b id="pposts">0</b><span>temas</span></div>
+    </div>
+    <input type="text" id="fname" maxlength="30" placeholder="Nombre a mostrar">
+    <div><button id="bName">Guardar nombre</button></div>
+    <input type="file" id="fAvatar" accept=".png,.jpg,.jpeg,.gif,.webp,image/*">
+    <div><button id="bAvatar">Subir imagen</button></div>
+    <div id="pmsg"></div>
+  </div>
+  <div class="pcard" id="gate" style="display:none">
+    <h1>Solo socios</h1>
+    <p class="sub"><a class="btn" href="login.html" style="font-size:.8rem;font-weight:700;color:var(--text);background:rgba(34,211,238,.1);border:1px solid rgba(34,211,238,.4);border-radius:8px;padding:7px 12px;text-decoration:none">Entrar</a></p>
+  </div>
+</main>
+<footer>R.D.B. REMEMBER DANCE CLUB</footer>
+<script src="js/bg3d.js"></script>
+<script src="js/sounds.js"></script>
+<script>
+(function () {
+  const msg = document.getElementById('pmsg');
+  const say = (t, ok) => { msg.className = ok ? 'ok' : 'err'; msg.textContent = t; };
+  document.getElementById('logout').onclick = e => {
+    e.preventDefault();
+    fetch('/api/logout', { method: 'POST' }).then(() => location.href = '/index.html');
+  };
+  let myEmail = null;
+  fetch('/api/me').then(r => r.json()).then(async u => {
+    if (!u.email) { document.getElementById('gate').style.display = ''; return; }
+    myEmail = u.email;
+    document.getElementById('pcard').style.display = '';
+    document.getElementById('fname').value = u.name || '';
+    refresh();
+  });
+  async function refresh() {
+    const [me, nicks] = await Promise.all([
+      fetch('/api/me').then(r => r.json()),
+      fetch('/api/nicks').then(r => r.json())
+    ]);
+    const rec = nicks.find(x => x.email === myEmail) || { messages: 0, rank: 'Novato' };
+    document.getElementById('pname').textContent = me.name || myEmail.split('@')[0];
+    document.getElementById('prank').textContent = '🏅 ' + rec.rank;
+    document.getElementById('pmsgs').textContent = rec.messages;
+    const av = document.getElementById('avatarImg');
+    av.onerror = () => { av.onerror = null; av.src = 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="130" height="130"><rect width="130" height="130" rx="65" fill="#1a1a30"/><text x="65" y="82" font-size="52" text-anchor="middle" fill="#c026ff" font-family="sans-serif">${(me.name || myEmail)[0].toUpperCase()}</text></svg>`); };
+    av.src = me.avatar || ('https://api.dicebear.com/9.x/identicon/svg?seed=' + encodeURIComponent(myEmail));
+    const posts = await fetch('/api/posts').then(r => r.json()).catch(() => []);
+    document.getElementById('pposts').textContent = posts.filter(p => p.author === myEmail).length;
+  }
+  document.getElementById('bName').onclick = () => {
+    const name = document.getElementById('fname').value;
+    fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+      .then(async r => {
+        const j = await r.json();
+        if (j.ok) { say('Nombre guardado.', true); if (window.RDBSound) RDBSound.send(); refresh(); }
+        else say(j.error || 'Error', false);
+      }).catch(() => say('Error de red', false));
+  };
+  document.getElementById('bAvatar').onclick = () => {
+    const f = document.getElementById('fAvatar').files[0];
+    if (!f) { say('Elige una imagen primero.', false); return; }
+    const fd = new FormData();
+    fd.append('avatar', f);
+    say('Subiendo…', true);
+    fetch('/api/avatar', { method: 'POST', body: fd }).then(async r => {
+      const j = await r.json();
+      if (j.ok) { say('Imagen actualizada.', true); if (window.RDBSound) RDBSound.send(); refresh(); }
+      else say(j.error || 'Error', false);
+    }).catch(() => say('Error de red', false));
+  };
+})();
+</script>
+</body>
+</html>

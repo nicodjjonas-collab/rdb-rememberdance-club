@@ -92,7 +92,7 @@
 <div id="bg3d"></div><div class="vignette"></div>
 <header>
   <div class="logo"><video class="logo-vid" src="videos/logo-small.mp4" autoplay muted loop playsinline></video><div>R.D.B. <span>ReMeMBeR DaNCe CLuB</span></div></div>
-  <nav><a href="index.html">Radio + Chat</a><a href="foro.html" class="active">Foro</a><a href="admin.html" id="adminLink" style="display:none">Admin</a><a href="#" id="logout">Salir</a></nav>
+  <nav><a href="index.html">Radio + Chat</a><a href="foro.html" class="active">Foro</a><a href="perfil.html">Mi perfil</a><a href="admin.html" id="adminLink" style="display:none">Admin</a><a href="#" id="logout">Salir</a></nav>
 </header>
 <main class="fade-in">
   <div id="gate" style="display:none"><h1>Solo socios</h1><p class="sub">Entra con tu email para ver el foro.</p><a class="btn" href="login.html">Entrar / Registrarme</a></div>
@@ -139,11 +139,14 @@
 <script>
 (function () {
   let me = null, sections = [], genres = [], allPosts = [], cur = null;
-  let staff = [], myNick = '', iAmMod = false;
+  let staff = [], myNick = '', iAmMod = false, nickMap = {};
   const badge = nick => {
-    const s = staff.find(x => x.nick === nick);
+    const s = staff.find(x => x.nick === nick || x.email === nick);
     return s ? (s.admin ? ' 👑' : ' 🛡') : '';
   };
+  const who = nick => nickMap[nick] || null;
+  const avImg = (rec, sz) => rec && rec.avatar
+    ? `<img src="${rec.avatar}" loading="lazy" style="width:${sz}px;height:${sz}px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:6px;border:1px solid var(--stroke)">` : '';
   const byId = id => sections.find(s => s.id === id);
   const kids = id => sections.filter(s => s.parent === id);
   const icon = s => s.kind === 'music' ? '🎵' : '📌';
@@ -160,9 +163,12 @@
       fetch('/api/meta').then(r => r.json()),
       fetch('/api/stats').then(r => r.json()),
       fetch('/api/posts').then(r => r.json()),
-      fetch('/api/staff').then(r => r.json())
-    ]).then(([s, m, st, p, sf]) => {
+      fetch('/api/staff').then(r => r.json()),
+      fetch('/api/nicks').then(r => r.json())
+    ]).then(([s, m, st, p, sf, nk]) => {
       staff = sf;
+      nickMap = {};
+      nk.forEach(n => { nickMap[n.email] = n; nickMap[n.nick] = n; });
       myNick = u.email.split('@')[0];
       iAmMod = !!(u.admin || sf.find(x => x.nick === myNick && x.mod));
       sections = s; genres = m.genres; allPosts = p;
@@ -379,12 +385,30 @@
       <div class="comments"></div>
       <div class="cform"><input maxlength="500" placeholder="Comentar…"><button>OK</button></div>`;
     d.querySelector('h3').textContent = p.title;
-    d.querySelector('.meta').textContent = `${p.nick}${badge(p.nick)} · ${date}`;
+    const metaEl = d.querySelector('.meta');
+    metaEl.innerHTML = '';
+    const rec = who(p.author || '') || who(p.nick);
+    if (rec && rec.avatar) {
+      const im = document.createElement('img');
+      im.src = rec.avatar; im.loading = 'lazy';
+      im.style.cssText = 'width:26px;height:26px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:6px;border:1px solid var(--stroke)';
+      metaEl.appendChild(im);
+    }
+    const mt = document.createElement('span');
+    mt.textContent = `${p.nick}${badge(p.nick)}${rec ? ' · 🏅' + rec.rank : ''} · ${date}`;
+    metaEl.appendChild(mt);
     d.querySelector('.body').innerHTML = Rich.render(p.body || '');
     const cb = d.querySelector('.comments');
     (p.comments || []).forEach((c, idx) => {
       const x = document.createElement('div');
       x.className = 'c'; x.innerHTML = '<b></b> <span></span>';
+      const cr = who(c.nick);
+      if (cr && cr.avatar) {
+        const im = document.createElement('img');
+        im.src = cr.avatar; im.loading = 'lazy';
+        im.style.cssText = 'width:20px;height:20px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:5px';
+        x.prepend(im);
+      }
       x.querySelector('b').textContent = c.nick + badge(c.nick);
       x.querySelector('span').innerHTML = Rich.render(c.text);
       if (iAmMod || c.nick === myNick) {
@@ -413,7 +437,7 @@
       bb.onclick = () => {
         if (!confirm(`¿Banear a ${p.nick}? No podrá entrar.`)) return;
         fetch('/api/ban', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: p.nick, banned: true }) }).then(async r => {
+          body: JSON.stringify({ email: p.author || p.nick, banned: true }) }).then(async r => {
           const j = await r.json().catch(() => ({}));
           if (!r.ok) alert(j.error || 'Error'); else loadPosts();
         });

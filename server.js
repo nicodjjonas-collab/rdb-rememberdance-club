@@ -15,8 +15,10 @@ const PORT = process.env.PORT || process.env.SERVER_PORT || 3000;
 const APP_URL = (process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || ('http://localhost:' + PORT)).replace(/\/$/, '');
 const DATA = path.join(__dirname, 'data', 'db.json');
 const UP = path.join(__dirname, 'uploads');
+const AVD = path.join(UP, 'avatars');
 fs.mkdirSync(path.dirname(DATA), { recursive: true });
 fs.mkdirSync(UP, { recursive: true });
+fs.mkdirSync(AVD, { recursive: true });
 
 const GENRES = ['remember', 'house', 'trance', 'techno', 'dance', 'sesion', 'otro'];
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
@@ -67,6 +69,8 @@ async function storeInit() {
     await pg.query(`CREATE TABLE IF NOT EXISTS posts (id TEXT PRIMARY KEY, sectionid TEXT, title TEXT, body TEXT, genre TEXT, price TEXT, contact TEXT, nick TEXT, author TEXT, file TEXT, public_id TEXT, original TEXT, size BIGINT DEFAULT 0, downloads INT DEFAULT 0, views INT DEFAULT 0, date TIMESTAMPTZ)`);
     await pg.query(`CREATE TABLE IF NOT EXISTS comments (id TEXT PRIMARY KEY, post_id TEXT, nick TEXT, text TEXT, date TIMESTAMPTZ)`);
     await pg.query(`CREATE TABLE IF NOT EXISTS chat (id TEXT PRIMARY KEY, nick TEXT, text TEXT, date TIMESTAMPTZ)`);
+    await pg.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT`);
+    await pg.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT`);
     const c = await pg.query('SELECT COUNT(*)::int AS n FROM sections');
     if (c.rows[0].n === 0) {
       for (const s of seedSections()) {
@@ -113,7 +117,7 @@ function lsave(db) { fs.writeFileSync(DATA, JSON.stringify(db)); }
 const store = {
   async users() {
     if (!usePg) return lload().users;
-    return (await pg.query('SELECT email,pass,admin,mod,banned,verified,vtoken,date FROM users')).rows;
+    return (await pg.query('SELECT email,pass,admin,mod,banned,verified,vtoken,date,display_name,avatar FROM users')).rows;
   },
   async addUser(u) {
     if (!usePg) { const db = lload(); db.users.push(u); lsave(db); return; }
@@ -223,7 +227,21 @@ const store = {
   }
 };
 
-/* ================= ARCHIVOS (disco o Cloudinary) ================= */
+function rankFor(n) {
+  if (n >= 400) return 'Leyenda';
+  if (n >= 150) return 'Veterano';
+  if (n >= 50) return 'Habitual';
+  if (n >= 10) return 'Socio';
+  return 'Novato';
+}
+function avatarUrl(u) {
+  if (!u || !u.avatar) return null;
+  if (/^https?:\/\//.test(u.avatar)) return u.avatar;
+  return '/avatars/' + u.avatar;
+}
+function dispName(u) {
+  return (u.display_name || u.email.split('@')[0]);
+}
 let cloud = null;
 let useCloud = false;
 function filesInit() {
@@ -406,15 +424,70 @@ app.post('/api/logout', async (req, res) => {
 });
 app.get('/api/me', async (req, res) => {
   const u = await me(req);
-  res.json(u || { email: null });
+  if (!u) return res.json({ email: null });
+  const users = await store.users();
+  const f = users.find(x => x.email === u.email) || {};
+  res.json({ email: u.email, admin: u.admin, name: dispName({ ...f, email: u.email }), avatar: avatarUrl(f) });
 });
+app.get('/api/nicks', needAuth, async (req, res) => {
+  const users = await store.users();
+  const posts = await store.posts();
+  res.json(users.filter(u => !u.banned).map(u => {
+    const disp = dispName(u);
+    const pref = u.email.split('@')[0];
+    let m = 0;
+    posts.forEach(p => {
+      if (p.author === u.email) m++;
+      (p.comments || []).forEach(c => { if (c.nick === disp || c.nick === pref) m++; });
+    });
+    return { email: u.email, nick: disp, avatar: avatarUrl(u), messages: m, rank: rankFor(m) };
+  }));
+});
+app.post('/api/profile', needAuth, async (req, res) => {
+  const name = String((req.body || {}).name || '').trim().slice(0, 30);
+  if (name.length < 2) return res.status(400).json({ error: 'Nombre de 2 a 30 caracteres' });
+  await store.patchUser(req.user.email, { display_name: name });
+  res.json({ ok: true, name });
+});
+const imgUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, cb) => {
+    const ok = /\.(png|jpe?g|gif|webp)$/i.test(file.originalname) && /^image\//.test(file.mimetype);
+    cb(ok ? null : new Error('Solo imagen png/jpg/gif/webp'), ok);
+  },
+  limits: { fileSize: 2 * 1024 * 1024 }
+});
+app.post('/api/avatar', needAuth, (req, res, next) => {
+  imgUpload.single('avatar')(req, res, err => {
+    if (err) return res.status(400).json({ error: err.message || 'Fallo la subida' });
+    next();
+  });
+}, async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Elige una imagen' });
+  const users = await store.users();
+  const old = users.find(x => x.email === req.user.email);
+  let ref;
+  if (useCloud) {
+    const r = await uploadToCloud(req.file.buffer).catch(() => null);
+    if (!r) return res.status(500).json({ error: 'No se pudo subir' });
+    ref = r.secure_url;
+  } else {
+    const ext = ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp' })[req.file.mimetype] || '.png';
+    ref = uid() + ext;
+    fs.writeFileSync(path.join(AVD, ref), req.file.buffer);
+  }
+  if (old && old.avatar && !/^https?:\/\//.test(old.avatar)) fs.rm(path.join(AVD, old.avatar), { force: true }, () => {});
+  await store.patchUser(req.user.email, { avatar: ref });
+  res.json({ ok: true, avatar: useCloud ? ref : '/avatars/' + ref });
+});
+app.use('/avatars', express.static(AVD));
 
 // ---- Moderación y usuarios ----
 app.get('/api/users', needAdmin, async (req, res) => {
   res.json((await store.users()).map(u => ({ email: u.email, admin: !!u.admin, mod: !!u.mod, banned: !!u.banned, verified: !!u.verified, date: u.date })));
 });
 app.get('/api/staff', needAuth, async (req, res) => {
-  res.json((await store.users()).filter(u => u.admin || u.mod).map(u => ({ nick: u.email.split('@')[0], admin: !!u.admin, mod: !!u.mod })));
+  res.json((await store.users()).filter(u => u.admin || u.mod).map(u => ({ nick: dispName(u), email: u.email, admin: !!u.admin, mod: !!u.mod })));
 });
 app.post('/api/mods', needAdmin, async (req, res) => {
   const em = String((req.body || {}).email || '').trim().toLowerCase();
@@ -502,8 +575,7 @@ app.post('/api/posts', needAuth, (req, res, next) => {
   const sec = sections.find(s => s.id === sectionId);
   if (!sec) return res.status(400).json({ error: 'Sección inválida' });
   if (!title || !String(title).trim()) return res.status(400).json({ error: 'Falta título' });
-  if (sec.kind === 'music' && !req.file) return res.status(400).json({ error: 'Sube el audio (mp3/wav/ogg/m4a)' });
-  let stored = {};
+  if (sec.kind === 'music' && !req.file) return res.status(400).json({ error: 'Sube el audio (mp3/wav/ogg/m4a)' });  let stored = {};
   try {
     if (req.file) {
       if (useCloud) {
@@ -514,12 +586,13 @@ app.post('/api/posts', needAuth, (req, res, next) => {
       }
     }
   } catch (e) { return res.status(500).json({ error: 'No se pudo guardar el audio' }); }
+  const postAuthor = ((await store.users()).find(x => x.email === req.user.email)) || { email: req.user.email };
   const post = {
     id: uid(), sectionId, title: esc(title), body: esc(body),
     genre: req.file ? (GENRES.includes(genre) ? genre : 'otro') : undefined,
     price: ['ventas', 'compra'].includes(sec.id) ? esc(price) : undefined,
     contact: ['ventas', 'compra'].includes(sec.id) ? esc(contact) : undefined,
-    nick: req.user.email.split('@')[0],
+    nick: dispName(postAuthor),
     author: req.user.email,
     file: stored.file, public_id: stored.public_id, original: req.file ? req.file.originalname : undefined,
     size: stored.size || 0,
@@ -538,7 +611,8 @@ app.post('/api/comments', needAuth, async (req, res) => {
   const { postId, text } = req.body || {};
   const p = await store.findPost(postId);
   if (!p || !text || !String(text).trim()) return res.status(400).json({ error: 'Datos inválidos' });
-  await store.addComment(postId, { nick: req.user.email.split('@')[0], text: esc(text).slice(0, 500), date: new Date().toISOString() });
+  const commenter = ((await store.users()).find(x => x.email === req.user.email)) || { email: req.user.email };
+  await store.addComment(postId, { nick: dispName(commenter), text: esc(text).slice(0, 500), date: new Date().toISOString() });
   res.json({ ok: true });
 });
 app.delete('/api/comments', needAuth, async (req, res) => {
@@ -547,7 +621,7 @@ app.delete('/api/comments', needAuth, async (req, res) => {
   if (!p || !p.comments || !p.comments[idx]) return res.status(404).json({ error: 'No existe' });
   const users = await store.users();
   const u = users.find(x => x.email === req.user.email);
-  const own = p.comments[idx].nick === req.user.email.split('@')[0];
+  const own = u && (p.comments[idx].nick === dispName(u) || p.comments[idx].nick === u.email.split('@')[0]);
   if (!u || (!u.admin && !u.mod && !own)) return res.status(403).json({ error: 'Sin permiso' });
   await store.delComment(postId, idx);
   res.json({ ok: true });
@@ -629,7 +703,7 @@ wss.on('connection', async (ws, req) => {
   const users = await store.users();
   const u = users.find(x => x.email === rec.email);
   if (!u || u.banned || !u.verified) { try { ws.send(JSON.stringify({ type: 'denied' })); } catch {} ws.close(); return; }
-  ws.nick = rec.email.split('@')[0];
+  ws.nick = dispName(u);
   ws.send(JSON.stringify({ type: 'history', items: chatHistory }));
   broadcast({ type: 'online', n: wss.clients.size });
   ws.on('message', async raw => {
