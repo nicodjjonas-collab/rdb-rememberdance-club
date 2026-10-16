@@ -1,7 +1,10 @@
 // Rich: emotes estilo Twitch (7TV+BTTV globales), GIFs/imágenes, links y YouTube.
 const Rich = (() => {
   const emotes = {};
+  let _loading = null;
   async function loadEmotes() {
+    if (!_loading) {
+      _loading = (async () => {
     try {
       const s = await (await fetch('https://7tv.io/v3/emote-sets/global')).json();
       (s.emotes || []).forEach(e => { if (e.name && e.id) emotes[e.name] = `https://cdn.7tv.app/emote/${e.id}/1x.webp`; });
@@ -10,7 +13,11 @@ const Rich = (() => {
       const b = await (await fetch('https://api.betterttv.net/3/cached/emotes/global')).json();
       (Array.isArray(b) ? b : []).forEach(e => { if (e.code && e.id) emotes[e.code] = `https://cdn.betterttv.net/emote/${e.id}/1x`; });
     } catch {}
+      })();
+    }
+    return _loading;
   }
+  const ensure = () => loadEmotes();
   const list = () => Object.entries(emotes).map(([code, url]) => ({ code, url }));
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   function ytId(u) {
@@ -48,5 +55,5 @@ const Rich = (() => {
     });
     return html;
   }
-  return { loadEmotes, render, list };
+  return { loadEmotes, ensure, render, list };
 })();

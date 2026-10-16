@@ -212,6 +212,7 @@
     }
     d.querySelector('b').textContent = m.nick;
     d.querySelector('span').innerHTML = Rich.render(m.text);
+    d.querySelector('span').dataset.raw = m.text;
     log.appendChild(d);
     log.scrollTop = log.scrollHeight;
   }
@@ -258,10 +259,15 @@
   ctext.onkeydown = e => { if (e.key === 'Enter') send(); };
   const panel = document.getElementById('emopanel');
   let emoLoaded = false;
+  Rich.ensure().then(() => {
+    document.querySelectorAll('#chatLog span').forEach(s => {
+      if (s.dataset.raw) s.innerHTML = Rich.render(s.dataset.raw);
+    });
+  });
   document.getElementById('emobtn').onclick = async () => {
     panel.style.display = panel.style.display === 'none' ? '' : 'none';
     if (!emoLoaded) {
-      await Rich.loadEmotes();
+      await Rich.ensure();
       emoLoaded = true;
       const grid = document.getElementById('emogrid');
       Rich.list().forEach(e => {

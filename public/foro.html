@@ -139,7 +139,11 @@
 <script>
 (function () {
   let me = null, sections = [], genres = [], allPosts = [], cur = null;
-  let staff = [], myNick = '', iAmMod = false, nickMap = {};
+  let staff = [], myNick = '', iAmMod = false, nickMap = {}, emoReady = false;
+  Rich.ensure().then(() => {
+    emoReady = true;
+    if (cur) loadPosts();
+  });
   const badge = nick => {
     const s = staff.find(x => x.nick === nick || x.email === nick);
     return s ? (s.admin ? ' 👑' : ' 🛡') : '';
@@ -383,7 +387,7 @@
     d.innerHTML = `<h3></h3><div class="meta"></div><div class="body"></div>${extra}
       <div class="row"><button class="btn danger">Borrar</button></div>
       <div class="comments"></div>
-      <div class="cform"><input maxlength="500" placeholder="Comentar…"><button>OK</button></div>`;
+      <div class="cform"><input maxlength="500" placeholder="Comentar… (:emote:)"><button>OK</button></div>`;
     d.querySelector('h3').textContent = p.title;
     const metaEl = d.querySelector('.meta');
     metaEl.innerHTML = '';
