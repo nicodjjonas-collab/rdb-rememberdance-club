@@ -176,7 +176,7 @@ const store = {
   },
   async addPost(p) {
     if (!usePg) { const db = lload(); db.posts.push({ ...p, comments: [] }); lsave(db); return; }
-    await pg.query('INSERT INTO posts (id,sectionid,title,body,genre,price,contact,nick,author,file,public_id,original,size,downloads,views,date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)',
+    await pg.query('INSERT INTO posts (id,sectionid,title,body,genre,price,contact,nick,author,file,public_id,original,size,downloads,views,date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)',
       [p.id, p.sectionId, p.title, p.body, p.genre || null, p.price || null, p.contact || null, p.nick, p.author, p.file || null, p.public_id || null, p.original || null, p.size || 0, 0, 0, p.date]);
   },
   async findPost(id) {
@@ -342,6 +342,7 @@ const needAdmin = async (req, res, next) => {
 const app = express();
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '1mb' }));
+process.on('unhandledRejection', e => console.log('[ERR]', (e && e.message) || e));
 
 // ---- Auth ----
 app.post('/api/register', async (req, res) => {
