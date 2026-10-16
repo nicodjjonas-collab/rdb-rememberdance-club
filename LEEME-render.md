@@ -22,7 +22,15 @@ Te pedirá tu cuenta de GitHub (mejor con token, no contraseña).
      Gmail: `smtp.gmail.com:587` + contraseña de aplicación.
 4. Deploy. Te da URL tipo `https://rdb-club.onrender.com`.
 
-## 3. Avisos del plan gratis
+## 3. Para que NO se borre nada (persistencia)
+El disco gratis se resetea. Crea gratis:
+- **Neon** (neon.tech) → proyecto → copia la `DATABASE_URL` (postgres).
+- **Cloudinary** (cloudinary.com) → Dashboard → `CLOUDINARY_URL`
+  (botón "Copy" con formato `cloudinary://clave:secreto@nube`).
+Pon ambas como variables (`DATABASE_URL`, `CLOUDINARY_URL`) y reinicia:
+verás `[PG]` y `[cloud]` en consola. Sin ellas funciona igual pero en local efímero.
+
+## 4. Avisos del plan gratis
 - Se duerme tras ~15 min sin visitas (despierta al entrar, tarda ~30 s).
 - **Los MP3 y la base de datos se borran** al reiniciar/redesplegar (disco efímero).
   Para conservarlos: disco persistente de pago o Cloudinary/S3.

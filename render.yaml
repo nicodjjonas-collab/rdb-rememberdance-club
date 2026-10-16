@@ -10,6 +10,10 @@ services:
         generateValue: true
       - key: ADMIN_EMAILS
         value: ""
+      - key: DATABASE_URL
+        sync: false
+      - key: CLOUDINARY_URL
+        sync: false
       - key: SMTP_HOST
         value: ""
       - key: SMTP_PORT

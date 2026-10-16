@@ -1,46 +1,18 @@
-// R.D.B. Club — servidor: login + secciones anidadas + foro + radio + chat
+// R.D.B. Club — servidor: login + secciones + foro + radio + chat
+// Persistencia: Postgres (DATABASE_URL) + Cloudinary; si faltan, modo local (JSON+disco).
 require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
-const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const http = require('http');
 const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
+const nodemailer = require('nodemailer');
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || process.env.SERVER_PORT || 3000;
 const APP_URL = (process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || ('http://localhost:' + PORT)).replace(/\/$/, '');
-const SMTP = {
-  host: process.env.SMTP_HOST || '',
-  port: Number(process.env.SMTP_PORT || 587),
-  user: process.env.SMTP_USER || '',
-  pass: process.env.SMTP_PASS || '',
-  from: process.env.SMTP_FROM || ''
-};
-let mailer = null;
-if (SMTP.host && SMTP.user && SMTP.pass) {
-  mailer = nodemailer.createTransport({
-    host: SMTP.host, port: SMTP.port, secure: SMTP.port === 465,
-    auth: { user: SMTP.user, pass: SMTP.pass }
-  });
-}
-async function sendVerifyEmail(email, token, base) {
-  const link = `${(base || APP_URL).replace(/\/$/, '')}/verificar.html?t=${token}`;
-  if (!mailer) {
-    console.log(`[SIN SMTP] Enlace de verificación para ${email}: ${link}`);
-    return false;
-  }
-  await mailer.sendMail({
-    from: SMTP.from || SMTP.user,
-    to: email,
-    subject: 'R.D.B. Club — valida tu email',
-    text: `Bienvenido al club. Valida tu cuenta aquí:\n${link}\nSi no te registraste, ignora este correo.`,
-    html: `<p>Bienvenido al club.</p><p><a href="${link}">Pulsa aquí para validar tu cuenta</a></p><p>Si no te registraste, ignora este correo.</p>`
-  });
-  return true;
-}
 const DATA = path.join(__dirname, 'data', 'db.json');
 const UP = path.join(__dirname, 'uploads');
 fs.mkdirSync(path.dirname(DATA), { recursive: true });
@@ -48,26 +20,14 @@ fs.mkdirSync(UP, { recursive: true });
 
 const GENRES = ['remember', 'house', 'trance', 'techno', 'dance', 'sesion', 'otro'];
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const esc = s => String(s ?? '').slice(0, 2000);
+const okEmail = e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || ''));
 
-function load() {
-  let db;
-  try { db = JSON.parse(fs.readFileSync(DATA, 'utf8')); }
-  catch { db = { posts: [], chat: [] }; }
-  db.posts = db.posts || [];
-  db.chat = db.chat || [];
-  db.users = db.users || [];
-  db.users.forEach(u => { if (u.verified == null) u.verified = true; if (u.mod == null) u.mod = false; if (u.banned == null) u.banned = false; }); // cuentas anteriores, validadas
-  db.sessions = db.sessions || {};
-  if (!db.sections) { db.sections = seedSections(); migratePosts(db); db.seedV = 2; save(db); }
-  else if (db.seedV !== 2) { upgradeSeed(db); db.seedV = 2; save(db); }
-  return db;
-}
-function save(db) { fs.writeFileSync(DATA, JSON.stringify(db)); }
-
+/* ================= SEED secciones ================= */
 function seedSections() {
-  // v2 estilo clásico: categorías + tablones + subsecciones
   const S = [];
-  const add = (id, name, desc, parent, kind) => S.push({ id, name, desc: desc || '', parent: parent || null, kind });
+  const add = (id, name, desc, parent, kind) => S.push({ id, name, desc: desc || '', parent: parent || null, kind, creator: null });
   add('cat-makina', 'MAKINA', '', null, 'cat');
   add('general', 'Makina General', 'El mundo de la música mákina y remember en general.', 'cat-makina', 'music');
   add('rem90', "Remember 90's", 'La época dorada: entra en cada año.', 'cat-makina', 'music');
@@ -91,29 +51,256 @@ function seedSections() {
   add('anecdotas', 'Anécdotas', 'Historias de cabina y de pista.', 'cat-club', 'board');
   return S;
 }
-const OLD_SEED_IDS = ['musica902000', 'discotecas', 'masia', 'general', 'ventas', 'ruegos', 'anecdotas',
-  'y1990', 'y1991', 'y1992', 'y1993', 'y1994', 'y1995', 'y1996', 'y1997', 'y1998', 'y1999', 'y2000'];
-function upgradeSeed(db) {
-  const customs = db.sections.filter(s => !OLD_SEED_IDS.includes(s.id));
-  const remapParent = p => (p === 'musica902000' ? 'rem90' : (p === 'discotecas' ? 'cat-discos' : p));
-  customs.forEach(s => { s.parent = remapParent(s.parent); });
-  db.sections = seedSections().concat(customs);
-  db.posts.forEach(p => {
-    if (p.sectionId === 'musica902000') p.sectionId = 'general';
-    if (p.sectionId === 'discotecas') p.sectionId = 'masia';
+
+/* ================= STORE (local JSON o Postgres) ================= */
+let pg = null;
+let usePg = false;
+async function storeInit() {
+  if (!process.env.DATABASE_URL) { console.log('[DB] modo local (JSON)'); return; }
+  try {
+    const { Pool } = require('pg');
+    pg = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    await pg.query('SELECT 1');
+    await pg.query(`CREATE TABLE IF NOT EXISTS users (email TEXT PRIMARY KEY, pass TEXT, admin BOOLEAN DEFAULT false, mod BOOLEAN DEFAULT false, banned BOOLEAN DEFAULT false, verified BOOLEAN DEFAULT false, vtoken TEXT, date TIMESTAMPTZ)`);
+    await pg.query(`CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, email TEXT, date TIMESTAMPTZ)`);
+    await pg.query(`CREATE TABLE IF NOT EXISTS sections (id TEXT PRIMARY KEY, name TEXT, description TEXT, parent TEXT, kind TEXT, creator TEXT)`);
+    await pg.query(`CREATE TABLE IF NOT EXISTS posts (id TEXT PRIMARY KEY, sectionid TEXT, title TEXT, body TEXT, genre TEXT, price TEXT, contact TEXT, nick TEXT, author TEXT, file TEXT, public_id TEXT, original TEXT, size BIGINT DEFAULT 0, downloads INT DEFAULT 0, views INT DEFAULT 0, date TIMESTAMPTZ)`);
+    await pg.query(`CREATE TABLE IF NOT EXISTS comments (id TEXT PRIMARY KEY, post_id TEXT, nick TEXT, text TEXT, date TIMESTAMPTZ)`);
+    await pg.query(`CREATE TABLE IF NOT EXISTS chat (id TEXT PRIMARY KEY, nick TEXT, text TEXT, date TIMESTAMPTZ)`);
+    const c = await pg.query('SELECT COUNT(*)::int AS n FROM sections');
+    if (c.rows[0].n === 0) {
+      for (const s of seedSections()) {
+        await pg.query('INSERT INTO sections (id,name,description,parent,kind,creator) VALUES ($1,$2,$3,$4,$5,$6)', [s.id, s.name, s.desc, s.parent, s.kind, s.creator]);
+      }
+      console.log('[DB] secciones iniciales creadas');
+    }
+    usePg = true;
+    console.log('[DB] Postgres OK (persistente)');
+  } catch (e) {
+    console.log('[DB] Postgres no disponible, uso local:', e.message);
+    pg = null;
+    usePg = false;
+  }
+}
+// ---- local ----
+function lload() {
+  let db;
+  try { db = JSON.parse(fs.readFileSync(DATA, 'utf8')); }
+  catch { db = { posts: [], chat: [] }; }
+  db.posts = db.posts || [];
+  db.chat = db.chat || [];
+  db.users = db.users || [];
+  db.sessions = db.sessions || {};
+  db.users.forEach(u => { if (u.verified == null) u.verified = true; if (u.mod == null) u.mod = false; if (u.banned == null) u.banned = false; });
+  if (!db.sections) { db.sections = seedSections(); db.seedV = 2; }
+  else if (db.seedV !== 2) {
+    const customs = db.sections.filter(s => s.id && !seedSections().find(x => x.id === s.id) && !['musica902000', 'discotecas'].includes(s.id));
+    customs.forEach(s => { s.parent = s.parent === 'musica902000' ? 'rem90' : (s.parent === 'discotecas' ? 'cat-discos' : s.parent); });
+    db.sections = seedSections().concat(customs);
+    db.posts.forEach(p => {
+      if (p.sectionId === 'musica902000') p.sectionId = 'general';
+      if (p.sectionId === 'discotecas') p.sectionId = 'masia';
+      if (p.section === 'canciones') p.sectionId = 'general';
+      if (['ventas', 'ruegos', 'anecdotas'].includes(p.section)) p.sectionId = p.section;
+      delete p.section;
+    });
+    db.seedV = 2;
+  }
+  return db;
+}
+function lsave(db) { fs.writeFileSync(DATA, JSON.stringify(db)); }
+// ---- API unificada (async) ----
+const store = {
+  async users() {
+    if (!usePg) return lload().users;
+    return (await pg.query('SELECT email,pass,admin,mod,banned,verified,vtoken,date FROM users')).rows;
+  },
+  async addUser(u) {
+    if (!usePg) { const db = lload(); db.users.push(u); lsave(db); return; }
+    await pg.query('INSERT INTO users (email,pass,admin,mod,banned,verified,vtoken,date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [u.email, u.pass, !!u.admin, false, false, !!u.verified, u.vtoken || null, u.date || new Date().toISOString()]);
+  },
+  async patchUser(email, p) {
+    if (!usePg) { const db = lload(); const u = db.users.find(x => x.email === email); if (u) Object.assign(u, p); lsave(db); return; }
+    const keys = Object.keys(p);
+    if (!keys.length) return;
+    await pg.query(`UPDATE users SET ${keys.map((k, i) => `${k}=$${i + 2}`).join(',')} WHERE email=$1`, [email, ...keys.map(k => p[k])]);
+  },
+  async sessionGet(t) {
+    if (!usePg) return lload().sessions[t] || null;
+    const r = await pg.query('SELECT email,date FROM sessions WHERE token=$1', [t]);
+    return r.rows[0] || null;
+  },
+  async sessionPut(t, email) {
+    const d = new Date().toISOString();
+    if (!usePg) { const db = lload(); db.sessions[t] = { email, date: d }; lsave(db); return; }
+    await pg.query('INSERT INTO sessions (token,email,date) VALUES ($1,$2,$3) ON CONFLICT (token) DO UPDATE SET email=$2,date=$3', [t, email, d]);
+  },
+  async sessionDel(t) {
+    if (!usePg) { const db = lload(); delete db.sessions[t]; lsave(db); return; }
+    await pg.query('DELETE FROM sessions WHERE token=$1', [t]);
+  },
+  async sessionsDelByEmail(email) {
+    if (!usePg) { const db = lload(); Object.keys(db.sessions).forEach(k => { if (db.sessions[k].email === email) delete db.sessions[k]; }); lsave(db); return; }
+    await pg.query('DELETE FROM sessions WHERE email=$1', [email]);
+  },
+  async sections() {
+    if (!usePg) return lload().sections;
+    return (await pg.query('SELECT id,name,description AS "desc",parent,kind,creator FROM sections')).rows;
+  },
+  async addSection(s) {
+    if (!usePg) { const db = lload(); db.sections.push(s); lsave(db); return; }
+    await pg.query('INSERT INTO sections (id,name,description,parent,kind,creator) VALUES ($1,$2,$3,$4,$5,$6)', [s.id, s.name, s.desc, s.parent, s.kind, s.creator || null]);
+  },
+  async delSection(id) {
+    if (!usePg) { const db = lload(); db.sections = db.sections.filter(s => s.id !== id); lsave(db); return; }
+    await pg.query('DELETE FROM sections WHERE id=$1', [id]);
+  },
+  async posts(filter) {
+    let list;
+    if (!usePg) {
+      list = lload().posts.map(p => ({ ...p, comments: p.comments || [], views: p.views || 0, downloads: p.downloads || 0 }));
+    } else {
+      const pr = await pg.query('SELECT * FROM posts');
+      const cr = await pg.query('SELECT id,post_id,nick,text,date FROM comments');
+      const byPost = {};
+      cr.rows.forEach(c => { (byPost[c.post_id] = byPost[c.post_id] || []).push({ id: c.id, nick: c.nick, text: c.text, date: c.date }); });
+      list = pr.rows.map(p => ({ id: p.id, sectionId: p.sectionid, title: p.title, body: p.body, genre: p.genre, price: p.price, contact: p.contact, nick: p.nick, author: p.author, file: p.file, public_id: p.public_id, original: p.original, size: Number(p.size || 0), downloads: p.downloads || 0, views: p.views || 0, date: p.date, comments: (byPost[p.id] || []).sort((a, b) => new Date(a.date) - new Date(b.date) || (a.id < b.id ? -1 : 1)) }));
+    }
+    list.sort((a, b) => new Date(b.date) - new Date(a.date) || (a.id < b.id ? -1 : 1));
+    if (filter) {
+      if (filter.sectionId) list = list.filter(p => p.sectionId === filter.sectionId);
+      if (filter.genre) list = list.filter(p => p.genre === filter.genre);
+      if (filter.q) list = list.filter(p => (p.title + ' ' + (p.body || '')).toLowerCase().includes(String(filter.q).toLowerCase()));
+    }
+    return list;
+  },
+  async addPost(p) {
+    if (!usePg) { const db = lload(); db.posts.push({ ...p, comments: [] }); lsave(db); return; }
+    await pg.query('INSERT INTO posts (id,sectionid,title,body,genre,price,contact,nick,author,file,public_id,original,size,downloads,views,date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)',
+      [p.id, p.sectionId, p.title, p.body, p.genre || null, p.price || null, p.contact || null, p.nick, p.author, p.file || null, p.public_id || null, p.original || null, p.size || 0, 0, 0, p.date]);
+  },
+  async findPost(id) {
+    return (await store.posts()).find(p => p.id === id) || null;
+  },
+  async delPost(id) {
+    if (!usePg) { const db = lload(); const p = db.posts.find(x => x.id === id); db.posts = db.posts.filter(x => x.id !== id); lsave(db); return p || null; }
+    const p = await store.findPost(id);
+    await pg.query('DELETE FROM comments WHERE post_id=$1', [id]);
+    await pg.query('DELETE FROM posts WHERE id=$1', [id]);
+    return p;
+  },
+  async incPost(id, field) {
+    if (!usePg) { const db = lload(); const p = db.posts.find(x => x.id === id); if (p) { p[field] = (p[field] || 0) + 1; lsave(db); return p[field]; } return 0; }
+    const r = await pg.query(`UPDATE posts SET ${field}=COALESCE(${field},0)+1 WHERE id=$1 RETURNING ${field}`, [id]);
+    return r.rows[0] ? r.rows[0][field] : 0;
+  },
+  async addComment(postId, c) {
+    const id = uid();
+    if (!usePg) { const db = lload(); const p = db.posts.find(x => x.id === postId); if (!p) return null; p.comments = p.comments || []; p.comments.push({ id, ...c }); lsave(db); return; }
+    await pg.query('INSERT INTO comments (id,post_id,nick,text,date) VALUES ($1,$2,$3,$4,$5)', [id, postId, c.nick, c.text, c.date]);
+  },
+  async delComment(postId, idx) {
+    if (!usePg) {
+      const db = lload(); const p = db.posts.find(x => x.id === postId);
+      if (!p || !p.comments || !p.comments[idx]) return null;
+      const [c] = p.comments.splice(idx, 1); lsave(db); return c;
+    }
+    const p = await store.findPost(postId);
+    if (!p || !p.comments[idx]) return null;
+    await pg.query('DELETE FROM comments WHERE id=$1', [p.comments[idx].id]);
+    return p.comments[idx];
+  },
+  async chat() {
+    if (!usePg) return lload().chat.slice(-50);
+    const r = await pg.query('SELECT nick,text,date FROM chat ORDER BY date DESC, id DESC LIMIT 50');
+    return r.rows.reverse();
+  },
+  async chatPush(item) {
+    const id = uid();
+    if (!usePg) { const db = lload(); db.chat.push(item); db.chat = db.chat.slice(-50); lsave(db); return; }
+    await pg.query('INSERT INTO chat (id,nick,text,date) VALUES ($1,$2,$3,$4)', [id, item.nick, item.text, item.date]);
+    await pg.query('DELETE FROM chat WHERE id NOT IN (SELECT id FROM chat ORDER BY date DESC, id DESC LIMIT 50)');
+  }
+};
+
+/* ================= ARCHIVOS (disco o Cloudinary) ================= */
+let cloud = null;
+let useCloud = false;
+function filesInit() {
+  const cn = process.env.CLOUDINARY_URL;
+  const trio = process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET;
+  if (cn || trio) {
+    try {
+      cloud = require('cloudinary').v2;
+      if (cn) cloud.config({ secure: true });
+      else cloud.config({ cloud_name: process.env.CLOUDINARY_CLOUD_NAME, api_key: process.env.CLOUDINARY_API_KEY, api_secret: process.env.CLOUDINARY_API_SECRET, secure: true });
+      useCloud = true;
+      console.log('[FILES] Cloudinary OK (persistente)');
+    } catch (e) { console.log('[FILES] Cloudinary fallo, uso disco:', e.message); }
+  } else console.log('[FILES] disco local');
+}
+function uploadToCloud(buffer) {
+  return new Promise((resolve, reject) => {
+    const up = cloud.uploader.upload_stream({ resource_type: 'auto', folder: 'rdb-club' }, (err, r) => {
+      if (err) reject(err);
+      else resolve(r);
+    });
+    up.end(buffer);
   });
 }
-function migratePosts(db) {
-  const map = { canciones: 'general', ventas: 'ventas', ruegos: 'ruegos', anecdotas: 'anecdotas' };
-  db.posts.forEach(p => {
-    p.sectionId = (map[p.section] || 'general');
-    delete p.section;
-  });
+const diskUpload = multer({
+  storage: multer.diskStorage({ destination: UP, filename: (req, file, cb) => cb(null, uid() + path.extname(file.originalname)) }),
+  fileFilter: audioFilter, limits: { fileSize: 150 * 1024 * 1024 }
+});
+const memUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: audioFilter, limits: { fileSize: 150 * 1024 * 1024 }
+});
+function audioFilter(req, file, cb) {
+  const ok = /\.(mp3|wav|ogg|oga|m4a|flac|webm)$/i.test(file.originalname);
+  cb(ok ? null : new Error('Solo audio'), ok);
+}
+async function storeFile(reqFile) {
+  if (!useCloud) {
+    const name = uid() + path.extname(reqFile.originalname);
+    fs.writeFileSync(path.join(UP, name), reqFile.buffer);
+    return { file: name, public_id: null, size: reqFile.size };
+  }
+  const r = await uploadToCloud(reqFile.buffer);
+  return { file: r.secure_url, public_id: r.public_id, size: r.bytes || reqFile.size };
+}
+async function deleteFile(post) {
+  try {
+    if (post.public_id && useCloud) await cloud.uploader.destroy(post.public_id, { resource_type: 'video' }).catch(() => cloud.uploader.destroy(post.public_id));
+    else if (post.file && !/^https?:\/\//.test(post.file)) fs.rm(path.join(UP, post.file), { force: true }, () => {});
+  } catch {}
 }
 
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-const esc = s => String(s ?? '').slice(0, 2000);
-const okEmail = e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || ''));
+/* ================= EMAIL ================= */
+const SMTP = {
+  host: process.env.SMTP_HOST || '',
+  port: Number(process.env.SMTP_PORT || 587),
+  user: process.env.SMTP_USER || '',
+  pass: process.env.SMTP_PASS || '',
+  from: process.env.SMTP_FROM || ''
+};
+let mailer = null;
+if (SMTP.host && SMTP.user && SMTP.pass) {
+  mailer = nodemailer.createTransport({ host: SMTP.host, port: SMTP.port, secure: SMTP.port === 465, auth: { user: SMTP.user, pass: SMTP.pass } });
+}
+async function sendVerifyEmail(email, token, base) {
+  const link = `${(base || APP_URL).replace(/\/$/, '')}/verificar.html?t=${token}`;
+  if (!mailer) { console.log(`[SIN SMTP] Enlace para ${email}: ${link}`); return false; }
+  await mailer.sendMail({
+    from: SMTP.from || SMTP.user, to: email,
+    subject: 'R.D.B. Club — valida tu email',
+    text: `Bienvenido al club. Valida tu cuenta aquí:\n${link}\nSi no te registraste, ignora este correo.`,
+    html: `<p>Bienvenido al club.</p><p><a href="${link}">Pulsa aquí para validar tu cuenta</a></p><p>Si no te registraste, ignora este correo.</p>`
+  });
+  return true;
+}
+
+/* ================= APP ================= */
 function parseCookies(req) {
   const o = {};
   (req.headers.cookie || '').split(';').forEach(c => {
@@ -122,50 +309,35 @@ function parseCookies(req) {
   });
   return o;
 }
-function setSession(res, email) {
-  const db = load();
+async function setSession(res, email) {
   const token = crypto.randomBytes(24).toString('hex');
-  db.sessions[token] = { email, date: new Date().toISOString() };
-  save(db);
+  await store.sessionPut(token, email);
   res.setHeader('Set-Cookie', `rdb_sess=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=2592000`);
 }
-function me(req) {
+async function me(req) {
   const t = parseCookies(req).rdb_sess;
   if (!t) return null;
-  const db = load();
-  const s = db.sessions[t];
+  const s = await store.sessionGet(t);
   if (!s) return null;
-  const u = db.users.find(x => x.email === s.email);
+  const users = await store.users();
+  const u = users.find(x => x.email === s.email);
   return u ? { email: u.email, admin: !!u.admin } : null;
 }
-const needAuth = (req, res, next) => {
-  const u = me(req);
+const needAuth = async (req, res, next) => {
+  const u = await me(req);
   if (!u) return res.status(401).json({ error: 'Entra con tu cuenta' });
-  const db = load();
-  const full = db.users.find(x => x.email === u.email);
+  const users = await store.users();
+  const full = users.find(x => x.email === u.email);
   if (!full || full.banned) return res.status(403).json({ error: 'Cuenta bloqueada. Contacta con el dueño.' });
   req.user = { email: full.email, admin: !!full.admin };
   next();
 };
-const needAdmin = (req, res, next) => {
-  const u = me(req);
-  if (!u || !u.admin) return res.status(403).json({ error: 'Solo admin' });
+const needAdmin = async (req, res, next) => {
+  const u = await me(req);
+  if (!u || !u.admin) return res.status(403).json({ error: 'Solo el dueño' });
   req.user = u;
   next();
 };
-
-const audioFilter = (req, file, cb) => {
-  const ok = /\.(mp3|wav|ogg|oga|m4a|flac|webm)$/i.test(file.originalname);
-  cb(ok ? null : new Error('Solo audio'), ok);
-};
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: UP,
-    filename: (req, file, cb) => cb(null, uid() + path.extname(file.originalname))
-  }),
-  fileFilter: audioFilter,
-  limits: { fileSize: 150 * 1024 * 1024 }
-});
 
 const app = express();
 app.set('trust proxy', 1);
@@ -177,165 +349,170 @@ app.post('/api/register', async (req, res) => {
   const em = String(email || '').trim().toLowerCase();
   if (!okEmail(em)) return res.status(400).json({ error: 'Email inválido' });
   if (!pass || String(pass).length < 6) return res.status(400).json({ error: 'Clave mínima 6 caracteres' });
-  const db = load();
-  if (db.users.find(u => u.email === em)) return res.status(400).json({ error: 'Ese email ya está registrado' });
-  const admin = db.users.length === 0 || ADMIN_EMAILS.includes(em);
-  db.users.push({ email: em, pass: bcrypt.hashSync(String(pass), 10), admin, verified: false, vtoken: crypto.randomBytes(24).toString('hex'), date: new Date().toISOString() });
-  save(db);
+  const users = await store.users();
+  if (users.find(u => u.email === em)) return res.status(400).json({ error: 'Ese email ya está registrado' });
+  const admin = users.length === 0 || ADMIN_EMAILS.includes(em);
+  await store.addUser({ email: em, pass: bcrypt.hashSync(String(pass), 10), admin, verified: false, vtoken: crypto.randomBytes(24).toString('hex'), date: new Date().toISOString() });
+  const created = (await store.users()).find(u => u.email === em);
   const base = `${req.protocol}://${req.get('host')}`;
-  const sent = await sendVerifyEmail(em, db.users.find(u => u.email === em).vtoken, base).catch(e => {
-    console.log('[SMTP ERROR]', e.message);
-    return false;
-  });
+  const sent = await sendVerifyEmail(em, created.vtoken, base).catch(e => { console.log('[SMTP ERROR]', e.message); return false; });
   res.json({ ok: true, email: em, sent });
 });
-app.post('/api/verify', (req, res) => {
+app.post('/api/verify', async (req, res) => {
   const { token } = req.body || {};
-  const db = load();
-  const u = db.users.find(x => x.vtoken === token);
+  const users = await store.users();
+  const u = users.find(x => x.vtoken === token);
   if (!u) return res.status(400).json({ error: 'Enlace inválido o ya usado' });
-  u.verified = true;
-  delete u.vtoken;
-  save(db);
-  setSession(res, u.email);
+  await store.patchUser(u.email, { verified: true, vtoken: null });
+  await setSession(res, u.email);
   res.json({ ok: true, email: u.email });
 });
-app.post('/api/resend', async (req, res) => {  const em = String((req.body || {}).email || '').trim().toLowerCase();
-  const db = load();
-  const u = db.users.find(x => x.email === em);
+app.post('/api/resend', async (req, res) => {
+  const em = String((req.body || {}).email || '').trim().toLowerCase();
+  const users = await store.users();
+  const u = users.find(x => x.email === em);
   if (!u) return res.json({ ok: true });
   if (u.verified) return res.json({ ok: true, already: true });
-  u.vtoken = crypto.randomBytes(24).toString('hex');
-  save(db);
+  const vtoken = crypto.randomBytes(24).toString('hex');
+  await store.patchUser(em, { vtoken });
   const base = `${req.protocol}://${req.get('host')}`;
-  await sendVerifyEmail(em, u.vtoken, base).catch(() => {});
+  await sendVerifyEmail(em, vtoken, base).catch(() => {});
   res.json({ ok: true });
 });
-app.post('/api/validate', needAdmin, (req, res) => {
+app.post('/api/validate', needAdmin, async (req, res) => {
   const em = String((req.body || {}).email || '').trim().toLowerCase();
-  const db = load();
-  const u = db.users.find(x => x.email === em);
-  if (!u) return res.status(404).json({ error: 'No existe' });
-  u.verified = true;
-  delete u.vtoken;
-  save(db);
+  const users = await store.users();
+  if (!users.find(x => x.email === em)) return res.status(404).json({ error: 'No existe' });
+  await store.patchUser(em, { verified: true, vtoken: null });
   res.json({ ok: true });
 });
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
   const { email, pass } = req.body || {};
   const em = String(email || '').trim().toLowerCase();
-  const db = load();
-  const u = db.users.find(x => x.email === em);
+  const users = await store.users();
+  const u = users.find(x => x.email === em);
   if (!u || !bcrypt.compareSync(String(pass || ''), u.pass)) return res.status(401).json({ error: 'Email o clave mal' });
   if (!u.verified) return res.status(403).json({ error: 'Valida tu email primero. Revisa tu correo.', needVerify: true });
   if (u.banned) return res.status(403).json({ error: 'Cuenta bloqueada. Contacta con el dueño.' });
-  setSession(res, em);
+  await setSession(res, em);
   res.json({ ok: true, email: em, admin: !!u.admin });
 });
-app.post('/api/logout', (req, res) => {
+app.post('/api/logout', async (req, res) => {
   const t = parseCookies(req).rdb_sess;
-  if (t) { const db = load(); delete db.sessions[t]; save(db); }
+  if (t) await store.sessionDel(t);
   res.setHeader('Set-Cookie', 'rdb_sess=; HttpOnly; Path=/; Max-Age=0');
   res.json({ ok: true });
 });
-app.get('/api/me', (req, res) => {
-  const u = me(req);
+app.get('/api/me', async (req, res) => {
+  const u = await me(req);
   res.json(u || { email: null });
-});
-app.get('/api/stats', needAuth, (req, res) => {
-  const db = load();
-  const posts = db.posts.length;
-  const messages = db.posts.reduce((a, p) => a + 1 + (p.comments || []).length, 0);
-  const newest = db.users.length ? db.users[db.users.length - 1].email.split('@')[0] : '—';
-  res.json({ users: db.users.length, posts, messages, newest });
 });
 
 // ---- Moderación y usuarios ----
-app.get('/api/users', needAdmin, (req, res) => {
-  res.json(load().users.map(u => ({ email: u.email, admin: !!u.admin, mod: !!u.mod, banned: !!u.banned, verified: !!u.verified, date: u.date })));
+app.get('/api/users', needAdmin, async (req, res) => {
+  res.json((await store.users()).map(u => ({ email: u.email, admin: !!u.admin, mod: !!u.mod, banned: !!u.banned, verified: !!u.verified, date: u.date })));
 });
-app.get('/api/staff', needAuth, (req, res) => {
-  res.json(load().users.filter(u => u.admin || u.mod).map(u => ({ nick: u.email.split('@')[0], admin: !!u.admin, mod: !!u.mod })));
+app.get('/api/staff', needAuth, async (req, res) => {
+  res.json((await store.users()).filter(u => u.admin || u.mod).map(u => ({ nick: u.email.split('@')[0], admin: !!u.admin, mod: !!u.mod })));
 });
-app.post('/api/mods', needAdmin, (req, res) => {
+app.post('/api/mods', needAdmin, async (req, res) => {
   const em = String((req.body || {}).email || '').trim().toLowerCase();
-  const db = load();
-  const u = db.users.find(x => x.email === em);
+  const users = await store.users();
+  const u = users.find(x => x.email === em);
   if (!u) return res.status(404).json({ error: 'No existe' });
   if (u.admin) return res.status(400).json({ error: 'Es dueño, no se toca' });
-  u.mod = !!((req.body || {}).mod);
-  save(db);
+  await store.patchUser(em, { mod: !!((req.body || {}).mod) });
   res.json({ ok: true });
 });
-app.post('/api/ban', needAuth, (req, res) => {
+app.post('/api/ban', needAuth, async (req, res) => {
   const em = String((req.body || {}).email || '').trim().toLowerCase();
   const banned = !!((req.body || {}).banned);
-  const db = load();
-  const actor = db.users.find(x => x.email === req.user.email);
-  const t = em.includes('@')
-    ? db.users.find(x => x.email === em)
-    : db.users.find(x => x.email.split('@')[0] === em);
+  const users = await store.users();
+  const actor = users.find(x => x.email === req.user.email);
+  const t = em.includes('@') ? users.find(x => x.email === em) : users.find(x => x.email.split('@')[0] === em);
   if (!actor || (!actor.admin && !actor.mod)) return res.status(403).json({ error: 'Solo moderación' });
   if (!t) return res.status(404).json({ error: 'Usuario no encontrado' });
   if (t.admin) return res.status(400).json({ error: 'No se puede banear al dueño' });
   if (t.mod && !actor.admin) return res.status(403).json({ error: 'Solo el dueño toca moderadores' });
   if (t.email === actor.email) return res.status(400).json({ error: 'No te puedes banear' });
-  t.banned = banned;
-  if (banned) Object.keys(db.sessions).forEach(k => { if (db.sessions[k].email === t.email) delete db.sessions[k]; });
-  save(db);
+  await store.patchUser(t.email, { banned });
+  if (banned) await store.sessionsDelByEmail(t.email);
   res.json({ ok: true });
 });
-// ---- Secciones ----
-app.get('/api/sections', needAuth, (req, res) => {
-  res.json(load().sections);
+app.get('/api/stats', needAuth, async (req, res) => {
+  const users = await store.users();
+  const posts = await store.posts();
+  res.json({
+    users: users.length,
+    posts: posts.length,
+    messages: posts.reduce((a, p) => a + 1 + (p.comments || []).length, 0),
+    newest: users.length ? users[users.length - 1].email.split('@')[0] : '—'
+  });
 });
-app.post('/api/sections', needAuth, (req, res) => {
+
+// ---- Secciones ----
+app.get('/api/sections', needAuth, async (req, res) => {
+  res.json(await store.sections());
+});
+app.post('/api/sections', needAuth, async (req, res) => {
   const { name, parent, kind } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'Falta nombre' });
-  const db = load();
-  if (parent && !db.sections.find(s => s.id === parent)) return res.status(400).json({ error: 'Padre inválido' });
-  const mine = db.sections.filter(s => s.creator === req.user.email).length;
+  const sections = await store.sections();
+  if (parent && !sections.find(s => s.id === parent)) return res.status(400).json({ error: 'Padre inválido' });
+  const mine = sections.filter(s => s.creator === req.user.email).length;
   if (!req.user.admin && mine >= 10) return res.status(400).json({ error: 'Límite: 10 secciones por usuario' });
-  const sec = { id: uid(), name: esc(name).slice(0, 80), parent: parent || null, kind: kind === 'board' ? 'board' : 'music', creator: req.user.email };
-  db.sections.push(sec);
-  save(db);
+  const sec = { id: uid(), name: esc(name).slice(0, 80), desc: '', parent: parent || null, kind: kind === 'board' ? 'board' : 'music', creator: req.user.email };
+  await store.addSection(sec);
   res.json({ ok: true, section: sec });
 });
-app.delete('/api/sections/:id', needAdmin, (req, res) => {
-  const db = load();
-  const i = db.sections.findIndex(s => s.id === req.params.id);
-  if (i < 0) return res.status(404).json({ error: 'No existe' });
-  if (db.sections.some(s => s.parent === req.params.id)) return res.status(400).json({ error: 'Tiene subsecciones dentro' });
-  if (db.posts.some(p => p.sectionId === req.params.id)) return res.status(400).json({ error: 'Tiene temas, muévelos o bórralos antes' });
-  db.sections.splice(i, 1);
-  save(db);
+app.delete('/api/sections/:id', needAdmin, async (req, res) => {
+  const sections = await store.sections();
+  if (!sections.find(s => s.id === req.params.id)) return res.status(404).json({ error: 'No existe' });
+  if (sections.some(s => s.parent === req.params.id)) return res.status(400).json({ error: 'Tiene subsecciones dentro' });
+  if ((await store.posts({})).some(p => p.sectionId === req.params.id)) return res.status(400).json({ error: 'Tiene temas, bórralos antes' });
+  await store.delSection(req.params.id);
   res.json({ ok: true });
 });
 
 // ---- Foro (login obligatorio) ----
-app.get('/foro.html', (req, res, next) => {
-  if (!me(req)) return res.redirect('/login.html');
+app.get('/foro.html', async (req, res, next) => {
+  if (!(await me(req))) return res.redirect('/login.html');
   next();
 });
-app.get('/api/meta', needAuth, (req, res) => res.json({ genres: GENRES }));
-
-app.get('/api/posts', needAuth, (req, res) => {
-  const db = load();
+app.get('/api/meta', needAuth, async (req, res) => res.json({ genres: GENRES }));
+app.get('/api/posts', needAuth, async (req, res) => {
   const { sectionId, genre, q } = req.query;
-  let list = db.posts.slice().reverse();
-  if (sectionId) list = list.filter(p => p.sectionId === sectionId);
-  if (genre) list = list.filter(p => p.genre === genre);
-  if (q) list = list.filter(p => (p.title + ' ' + (p.body || '')).toLowerCase().includes(String(q).toLowerCase()));
-  res.json(list.map(p => ({ ...p, file: p.file ? ('/dl/' + p.id) : undefined, stream: p.file ? ('/stream/' + p.id) : undefined })));
+  const list = await store.posts({ sectionId: sectionId || undefined, genre: genre || undefined, q: q || undefined });
+  res.json(list.map(p => ({
+    ...p,
+    file: p.file ? (useCloud ? p.file : '/dl/' + p.id) : undefined,
+    stream: p.file ? (useCloud ? p.file : '/stream/' + p.id) : undefined
+  })));
 });
-
-app.post('/api/posts', needAuth, upload.single('audio'), (req, res) => {
-  const db = load();
+const up = () => (useCloud ? memUpload : diskUpload);
+app.post('/api/posts', needAuth, (req, res, next) => {
+  up().single('audio')(req, res, err => {
+    if (err) return res.status(400).json({ error: err.message || 'Fallo la subida' });
+    next();
+  });
+}, async (req, res) => {
+  const sections = await store.sections();
   const { sectionId, title, body, genre, price, contact } = req.body;
-  const sec = db.sections.find(s => s.id === sectionId);
+  const sec = sections.find(s => s.id === sectionId);
   if (!sec) return res.status(400).json({ error: 'Sección inválida' });
   if (!title || !String(title).trim()) return res.status(400).json({ error: 'Falta título' });
   if (sec.kind === 'music' && !req.file) return res.status(400).json({ error: 'Sube el audio (mp3/wav/ogg/m4a)' });
+  let stored = {};
+  try {
+    if (req.file) {
+      if (useCloud) {
+        const r = await storeFile(req.file);
+        stored = { file: r.file, public_id: r.public_id, size: r.size };
+      } else {
+        stored = { file: req.file.filename, public_id: null, size: req.file.size };
+      }
+    }
+  } catch (e) { return res.status(500).json({ error: 'No se pudo guardar el audio' }); }
   const post = {
     id: uid(), sectionId, title: esc(title), body: esc(body),
     genre: req.file ? (GENRES.includes(genre) ? genre : 'otro') : undefined,
@@ -343,83 +520,69 @@ app.post('/api/posts', needAuth, upload.single('audio'), (req, res) => {
     contact: ['ventas', 'compra'].includes(sec.id) ? esc(contact) : undefined,
     nick: req.user.email.split('@')[0],
     author: req.user.email,
-    file: req.file ? req.file.filename : undefined,
-    original: req.file ? req.file.originalname : undefined,
-    size: req.file ? req.file.size : 0,
-    downloads: 0, views: 0, comments: [], date: new Date().toISOString()
+    file: stored.file, public_id: stored.public_id, original: req.file ? req.file.originalname : undefined,
+    size: stored.size || 0,
+    downloads: 0, views: 0, date: new Date().toISOString()
   };
-  db.posts.push(post);
-  save(db);
+  await store.addPost(post);
   res.json({ ok: true, id: post.id });
 });
-
-app.post('/api/posts/:id/view', needAuth, (req, res) => {
-  const db = load();
-  const p = db.posts.find(x => x.id === req.params.id);
+app.post('/api/posts/:id/view', needAuth, async (req, res) => {
+  const p = await store.findPost(req.params.id);
   if (!p) return res.status(404).json({ error: 'No existe' });
-  p.views = (p.views || 0) + 1;
-  save(db);
-  res.json({ ok: true, views: p.views });
+  const views = await store.incPost(req.params.id, 'views');
+  res.json({ ok: true, views });
 });
-app.post('/api/comments', needAuth, (req, res) => {  const db = load();
+app.post('/api/comments', needAuth, async (req, res) => {
   const { postId, text } = req.body || {};
-  const post = db.posts.find(p => p.id === postId);
-  if (!post || !text || !String(text).trim()) return res.status(400).json({ error: 'Datos inválidos' });
-  post.comments.push({ nick: req.user.email.split('@')[0], text: esc(text).slice(0, 500), date: new Date().toISOString() });
-  save(db);
+  const p = await store.findPost(postId);
+  if (!p || !text || !String(text).trim()) return res.status(400).json({ error: 'Datos inválidos' });
+  await store.addComment(postId, { nick: req.user.email.split('@')[0], text: esc(text).slice(0, 500), date: new Date().toISOString() });
   res.json({ ok: true });
 });
-app.delete('/api/comments', needAuth, (req, res) => {
+app.delete('/api/comments', needAuth, async (req, res) => {
   const { postId, idx } = req.body || {};
-  const db = load();
-  const p = db.posts.find(x => x.id === postId);
+  const p = await store.findPost(postId);
   if (!p || !p.comments || !p.comments[idx]) return res.status(404).json({ error: 'No existe' });
-  const u = db.users.find(x => x.email === req.user.email);
+  const users = await store.users();
+  const u = users.find(x => x.email === req.user.email);
   const own = p.comments[idx].nick === req.user.email.split('@')[0];
   if (!u || (!u.admin && !u.mod && !own)) return res.status(403).json({ error: 'Sin permiso' });
-  p.comments.splice(idx, 1);
-  save(db);
+  await store.delComment(postId, idx);
   res.json({ ok: true });
 });
-
-app.delete('/api/posts/:id', needAuth, (req, res) => {
-  const db = load();
-  const i = db.posts.findIndex(p => p.id === req.params.id);
-  if (i < 0) return res.status(404).json({ error: 'No existe' });
-  const u = db.users.find(x => x.email === req.user.email);
-  const own = db.posts[i].author === req.user.email ||
-    (!db.posts[i].author && db.posts[i].nick === req.user.email.split('@')[0]);
+app.delete('/api/posts/:id', needAuth, async (req, res) => {
+  const p = await store.findPost(req.params.id);
+  if (!p) return res.status(404).json({ error: 'No existe' });
+  const users = await store.users();
+  const u = users.find(x => x.email === req.user.email);
+  const own = p.author === req.user.email || (!p.author && p.nick === req.user.email.split('@')[0]);
   if (!u || (!u.admin && !u.mod && !own)) return res.status(403).json({ error: 'Solo el autor o moderación' });
-  const [p] = db.posts.splice(i, 1);
-  if (p.file) fs.rm(path.join(UP, p.file), { force: true }, () => {});
-  save(db);
+  await store.delPost(req.params.id);
+  await deleteFile(p);
   res.json({ ok: true });
 });
-
-app.get('/dl/:id', needAuth, (req, res) => {
-  const db = load();
-  const p = db.posts.find(x => x.id === req.params.id);
+app.get('/dl/:id', needAuth, async (req, res) => {
+  const p = await store.findPost(req.params.id);
   if (!p || !p.file) return res.status(404).send('No existe');
-  p.downloads++;
-  save(db);
+  await store.incPost(req.params.id, 'downloads');
+  if (useCloud) return res.redirect(p.file);
   res.download(path.join(UP, p.file), p.original || p.file);
 });
-
-// Radio pública (la escuchan todos)
-app.get('/stream/:id', (req, res) => {
-  const db = load();
-  const p = db.posts.find(x => x.id === req.params.id);
+app.get('/stream/:id', async (req, res) => {
+  const p = await store.findPost(req.params.id);
   if (!p || !p.file) return res.status(404).send('No existe');
+  if (useCloud) return res.redirect(p.file);
   res.sendFile(path.join(UP, p.file));
 });
-app.get('/api/radio', (req, res) => {
-  const db = load();
-  const musicIds = new Set(db.sections.filter(s => s.kind === 'music').map(s => s.id));
-  res.json(db.posts.filter(p => p.file && musicIds.has(p.sectionId)).reverse()
-    .map(p => ({ id: p.id, title: p.title, genre: p.genre, url: '/stream/' + p.id })));
+app.get('/api/radio', async (req, res) => {
+  const sections = await store.sections();
+  const musicIds = new Set(sections.filter(s => s.kind === 'music').map(s => s.id));
+  res.json((await store.posts()).filter(p => p.file && musicIds.has(p.sectionId))
+    .map(p => ({ id: p.id, title: p.title, genre: p.genre, url: useCloud ? p.file : '/stream/' + p.id })));
 });
 
-// Radios remember online (verificadas 13/10/2026). Proxy propio: evita bloqueos https/contenido-mixto.
+// Radios remember online (verificadas). Proxy propio para http/contenido-mixto.
 const RADIOS = [
   { id: 'remember-radio', name: 'Remember Radio', url: 'https://sm2.streamingmovil.com/proxy/webrr?mp=/WEBRR' },
   { id: 'java-radio', name: 'Java Radio Remember', url: 'https://stream.zeno.fm/6t6bmeznwtzuv', direct: true },
@@ -433,7 +596,7 @@ const RADIOS = [
 app.get('/api/radios', (req, res) => res.json(RADIOS.map(r => r.direct ? { id: r.id, name: r.name, url: r.url } : { id: r.id, name: r.name })));
 app.get('/api/radio-stream/:id', (req, res) => {
   const r = RADIOS.find(x => x.id === req.params.id);
-  if (!r) return res.status(404).send('No existe');
+  if (!r || r.direct) return res.status(404).send('No existe');
   const lib = r.url.startsWith('https') ? require('https') : require('http');
   const proxy = lib.get(r.url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36', 'Icy-MetaData': '0' } }, upstream => {
     if (upstream.statusCode !== 200) { res.status(502).send('Radio no disponible'); upstream.resume(); return; }
@@ -455,35 +618,40 @@ app.get('/api/chat-token', needAuth, (req, res) => {
   res.json({ ok: true, token });
 });
 const wss = new WebSocket.Server({ server, path: '/chat' });
-const history = load().chat.slice(-50);
-function broadcast(obj) {
-  const msg = JSON.stringify(obj);
-  wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(msg); });
-}
-wss.on('connection', (ws, req) => {
+let chatHistory = [];
+wss.on('connection', async (ws, req) => {
   let t = null;
   try { t = new URL(req.url, 'http://x').searchParams.get('t'); } catch {}
   const rec = t && chatTokens.get(t);
   if (!rec) { try { ws.send(JSON.stringify({ type: 'denied' })); } catch {} ws.close(); return; }
   chatTokens.delete(t);
-  const db0 = load();
-  const u = db0.users.find(x => x.email === rec.email);
+  const users = await store.users();
+  const u = users.find(x => x.email === rec.email);
   if (!u || u.banned || !u.verified) { try { ws.send(JSON.stringify({ type: 'denied' })); } catch {} ws.close(); return; }
   ws.nick = rec.email.split('@')[0];
-  ws.send(JSON.stringify({ type: 'history', items: history }));
+  ws.send(JSON.stringify({ type: 'history', items: chatHistory }));
   broadcast({ type: 'online', n: wss.clients.size });
-  ws.on('message', raw => {
+  ws.on('message', async raw => {
     let m;
     try { m = JSON.parse(raw); } catch { return; }
     if (m.type === 'msg' && m.text && String(m.text).trim()) {
       const item = { nick: ws.nick, text: esc(m.text).slice(0, 500), date: new Date().toISOString() };
-      history.push(item);
-      if (history.length > 50) history.shift();
-      const db = load(); db.chat = history; save(db);
+      chatHistory.push(item);
+      if (chatHistory.length > 50) chatHistory.shift();
+      await store.chatPush(item);
       broadcast({ type: 'msg', ...item });
     }
   });
   ws.on('close', () => broadcast({ type: 'online', n: wss.clients.size }));
 });
+function broadcast(obj) {
+  const msg = JSON.stringify(obj);
+  wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(msg); });
+}
 
-server.listen(PORT, () => console.log('RDB Club en puerto ' + PORT));
+(async () => {
+  await storeInit();
+  filesInit();
+  chatHistory = await store.chat();
+  server.listen(PORT, () => console.log('RDB Club en puerto ' + PORT + (usePg ? ' [PG]' : ' [local]') + (useCloud ? ' [cloud]' : '')));
+})();
